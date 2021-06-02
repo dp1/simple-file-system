@@ -1,27 +1,24 @@
-CCOPTS= -Wall -g -std=gnu99 -Wstrict-prototypes
-LIBS= 
+CCOPTS= -Wall -g -std=gnu99 -Wstrict-prototypes -Iinclude/
 CC=gcc
 AR=ar
 
 
 BINS= simplefs_test
 
-OBJS = #add here your object files
-
-HEADERS=bitmap.h\
-	disk_driver.h\
-	simplefs.h
-
-%.o:	%.c $(HEADERS)
-	$(CC) $(CCOPTS) -c -o $@  $<
+HEADERS = $(wildcard include/*.h)
+SRCS = $(wildcard src/*.c)
+OBJS = $(patsubst %.c,%.o,$(SRCS))
 
 .phony: clean all
 
 
-all:	$(BINS) 
+all: $(OBJS) $(BINS)
 
-so_game: simplefs_test.c $(OBJS) 
-	$(CC) $(CCOPTS)  -o $@ $^ $(LIBS)
+%.o: %.c $(HEADERS)
+	$(CC) $(CCOPTS) -c -o $@ $<
+
+simplefs_test: simplefs_test.c $(OBJS) $(HEADERS)
+	$(CC) $(CCOPTS)  -o $@ $^ $(OBJS)
 
 clean:
-	rm -rf *.o *~  $(BINS)
+	rm -rf *~  $(BINS) $(SRCS)
