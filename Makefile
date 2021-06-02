@@ -2,9 +2,7 @@ CCOPTS= -Wall -g -std=gnu99 -Wstrict-prototypes -Iinclude/
 CC=gcc
 AR=ar
 
-
-BINS= simplefs_test
-
+BINS = simplefs_test
 HEADERS = $(wildcard include/*.h)
 SRCS = $(wildcard src/*.c)
 OBJS = $(patsubst %.c,%.o,$(SRCS))
@@ -21,4 +19,4 @@ simplefs_test: simplefs_test.c $(OBJS) $(HEADERS)
 	$(CC) $(CCOPTS)  -o $@ $^ $(OBJS)
 
 clean:
-	rm -rf *~  $(BINS) $(SRCS)
+	rm -rf *~  $(BINS) $(OBJS)
