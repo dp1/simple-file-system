@@ -31,11 +31,12 @@ void DiskDriver_init(DiskDriver* disk, const char* filename, int num_blocks) {
         ONERROR(fd == -1, "[disk driver] Can't open backing file");
     }
 
+    char *metadata = mmap(NULL, metadata_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+    ONERROR(metadata == MAP_FAILED, "[disk driver] can't mmap header and bitmap");
+
     disk->fd = fd;
-    disk->header = mmap(NULL, sizeof(DiskHeader), PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
-    ONERROR(disk->header == NULL, "[disk driver] can't mmap header");
-    disk->bitmap.entries = mmap(NULL, sizeof(DiskHeader), PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, sizeof(DiskHeader));
-    ONERROR(disk->bitmap.entries == NULL, "[disk driver] can't mmap bitmap");
+    disk->header = (DiskHeader *) metadata;
+    disk->bitmap.entries = metadata + sizeof(DiskHeader);
     disk->bitmap.num_bits = num_blocks;
     disk->metadata_size = metadata_size;
 
@@ -57,11 +58,12 @@ int DiskDriver_readBlock(DiskDriver* disk, void* dest, int block_num) {
         int to_read = BLOCK_SIZE;
         lseek(disk->fd, disk->metadata_size + block_num * BLOCK_SIZE, SEEK_SET);
         while(to_read > 0) {
-            int res = read(disk->fd, dest + to_read, to_read);
+            int res = read(disk->fd, dest, to_read);
             if(res == -1 && errno == EAGAIN) continue;
             if(res == -1) return -1;
 
-            to_read += res;
+            to_read -= res;
+            dest += res;
         }
 
         return 0;
@@ -78,11 +80,12 @@ int DiskDriver_writeBlock(DiskDriver* disk, void* src, int block_num) {
     int to_write = BLOCK_SIZE;
     lseek(disk->fd, disk->metadata_size + block_num * BLOCK_SIZE, SEEK_SET);
     while(to_write > 0) {
-        int res = write(disk->fd, src + to_write, to_write);
+        int res = write(disk->fd, src, to_write);
         if(res == -1 && errno == EAGAIN) continue;
         if(res == -1) return -1;
 
-        to_write += res;
+        to_write -= res;
+        src += res;
     }
 
     if(status == 0) {
@@ -95,7 +98,7 @@ int DiskDriver_writeBlock(DiskDriver* disk, void* src, int block_num) {
 int DiskDriver_freeBlock(DiskDriver* disk, int block_num) {
 
     int res = BitMap_set(&disk->bitmap, block_num, 0);
-    if(res != 1) {
+    if(res != -1) {
         disk->header->free_blocks++;
     }
     return res;
@@ -107,10 +110,8 @@ int DiskDriver_getFreeBlock(DiskDriver* disk, int start) {
 }
 
 int DiskDriver_flush(DiskDriver* disk) {
-    int res = msync(disk->header, sizeof(DiskHeader), MS_SYNC);
-    ONERROR(res == -1, "[disk driver] msync 1 failed");
-    res = msync(disk->bitmap.entries, disk->header->bitmap_entries, MS_SYNC);
-    ONERROR(res == -1, "[disk driver] msync 2 failed");
+    int res = msync(disk->header, disk->metadata_size, MS_SYNC);
+    ONERROR(res == -1, "[disk driver] msync failed");
 
     return 0;
 }
