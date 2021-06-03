@@ -19,7 +19,13 @@ int BitMap_indexToBlock(int entry, uint8_t bit_num);
 
 // returns the index of the first bit having status "status"
 // in the bitmap bmap, and starts looking from position start
+// returns -1 if no block is found
 int BitMap_find(BitMap* bmap, int start, int status);
 
 // sets the bit at index pos in bmap to status
+// returns -1 if the block isn't in the bitmap
 int BitMap_set(BitMap* bmap, int pos, int status);
+
+// returns the status of the block at index pos
+// returns -1 if the block isn't in the bitmap
+int BitMap_get(BitMap *bmap, int pos);

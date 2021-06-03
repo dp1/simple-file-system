@@ -37,7 +37,18 @@ int BitMap_set(BitMap* bmap, int pos, int status) {
         } else {
             bmap->entries[key.entry_num] &= ~(1 << key.bit_num);
         }
+        return 0;
     }
 
-    return 0;
+    return -1;
+}
+
+int BitMap_get(BitMap* bmap, int pos) {
+    BitMapEntryKey key = BitMap_blockToIndex(pos);
+
+    if(key.entry_num >= bmap->num_bits) {
+        return -1;
+    }
+
+    return (bmap->entries[key.entry_num] >> key.bit_num) & 1;
 }
