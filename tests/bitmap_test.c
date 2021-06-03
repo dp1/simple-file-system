@@ -11,13 +11,13 @@ int main(int agc, char** argv) {
 
     for(int i = 0; i < 256*8; i++) {
         BitMap_set(&bmap, i, 1);
-        assert(BitMap_get(&bmap, i, 1) == i);
+        assert(BitMap_find(&bmap, i, 1) == i);
     }
 
     for(int i = 0; i < 128*8; i++) {
         BitMap_set(&bmap, i, 0);
     }
-    assert(BitMap_get(&bmap, 0, 1) == 128*8);
+    assert(BitMap_find(&bmap, 0, 1) == 128*8);
 
     printf("Bitmap tests passed\n");
 }

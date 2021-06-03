@@ -12,7 +12,7 @@ int BitMap_indexToBlock(int entry, uint8_t bit_num) {
     return (entry << 3) | bit_num;
 }
 
-int BitMap_get(BitMap* bmap, int start, int status) {
+int BitMap_find(BitMap* bmap, int start, int status) {
     int pos = start;
     while(pos < bmap->num_bits) {
         
