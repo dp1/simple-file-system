@@ -9,7 +9,6 @@ typedef struct {
   int bitmap_entries;  // how many bytes are needed to store the bitmap
   
   int free_blocks;     // free blocks
-  int first_free_block;// first block index
 } DiskHeader; 
 
 typedef struct {
