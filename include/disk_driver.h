@@ -13,7 +13,7 @@ typedef struct {
 
 typedef struct {
   DiskHeader* header; // mmapped
-  char* bitmap_data;  // mmapped (bitmap)
+  BitMap bitmap;  // mmapped (bitmap)
   int fd; // for us
 
   int metadata_size; // Total size of header + bitmap
