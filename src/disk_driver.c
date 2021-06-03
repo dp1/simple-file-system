@@ -23,16 +23,18 @@ void DiskDriver_init(DiskDriver* disk, const char* filename, int num_blocks) {
     int fd = open(filename, O_RDWR | O_CREAT | O_EXCL, 0777);
     if(fd != -1) {
         // New file
+        DBGPRINT("creating new file");
         int res = ftruncate(fd, metadata_size);
-        ONERROR(res == -1, "[disk driver] Can't resize file");
+        ONERROR(res == -1, "Can't resize file");
         is_new_file = true;
     } else {
+        DBGPRINT("opening existing file");
         fd = open(filename, O_RDWR);
-        ONERROR(fd == -1, "[disk driver] Can't open backing file");
+        ONERROR(fd == -1, "Can't open backing file");
     }
 
     char *metadata = mmap(NULL, metadata_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
-    ONERROR(metadata == MAP_FAILED, "[disk driver] can't mmap header and bitmap");
+    ONERROR(metadata == MAP_FAILED, "can't mmap header and bitmap");
 
     disk->fd = fd;
     disk->header = (DiskHeader *) metadata;
@@ -111,7 +113,7 @@ int DiskDriver_getFreeBlock(DiskDriver* disk, int start) {
 
 int DiskDriver_flush(DiskDriver* disk) {
     int res = msync(disk->header, disk->metadata_size, MS_SYNC);
-    ONERROR(res == -1, "[disk driver] msync failed");
+    ONERROR(res == -1, "msync failed");
 
     return 0;
 }
