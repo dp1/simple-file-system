@@ -18,4 +18,14 @@ int main(int argc, char **argv) {
     printf("%d\n", DiskDriver_getFreeBlock(&disk, 0));
     DiskDriver_writeBlock(&disk, block, 0);
     printf("%d\n", DiskDriver_getFreeBlock(&disk, 0));
+
+    DiskDriver_flush(&disk);
+
+    char block2[BLOCK_SIZE];
+    memset(block2, 0, BLOCK_SIZE);
+    assert(DiskDriver_readBlock(&disk, block2, 1) == 0);
+    assert(memcmp(block, block2, BLOCK_SIZE) == 0);
+    assert(DiskDriver_readBlock(&disk, block2, 2) == -1);
+
+    printf("Disk driver tests OK\n");
 }
