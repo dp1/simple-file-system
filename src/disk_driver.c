@@ -13,9 +13,10 @@
 void DiskDriver_init(DiskDriver* disk, const char* filename, int num_blocks) {
 
     int bitmap_size = (num_blocks + 7) / 8; // round up
-    int metadata_size = num_blocks * BLOCK_SIZE + bitmap_size + sizeof(DiskHeader);
+    int metadata_size = bitmap_size + sizeof(DiskHeader);
     // Round the metadata size so that the data blocks are BLOCK_SIZE bytes aligned
     metadata_size = ((metadata_size + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+    int total_size = metadata_size + num_blocks * BLOCK_SIZE;
 
     bool is_new_file = false;
 
@@ -24,7 +25,7 @@ void DiskDriver_init(DiskDriver* disk, const char* filename, int num_blocks) {
     if(fd != -1) {
         // New file
         DBGPRINT("creating new file");
-        int res = ftruncate(fd, metadata_size);
+        int res = ftruncate(fd, total_size);
         ONERROR(res == -1, "Can't resize file");
         is_new_file = true;
     } else {
@@ -33,7 +34,7 @@ void DiskDriver_init(DiskDriver* disk, const char* filename, int num_blocks) {
         ONERROR(fd == -1, "Can't open backing file");
     }
 
-    char *metadata = mmap(NULL, metadata_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+    char *metadata = mmap(NULL, total_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
     ONERROR(metadata == MAP_FAILED, "can't mmap header and bitmap");
 
     disk->fd = fd;
@@ -49,6 +50,14 @@ void DiskDriver_init(DiskDriver* disk, const char* filename, int num_blocks) {
         disk->header->bitmap_blocks = num_blocks;
 
         bzero(disk->bitmap.entries, bitmap_size);
+    } else {
+        // Some sanity checks when opening an existing file
+        ONERROR(disk->header->num_blocks != num_blocks, "file has %d blocks (not %d)",
+            disk->header->num_blocks, num_blocks);
+        ONERROR(disk->header->free_blocks > num_blocks, "file has more free blocks (%d) than total blocks (%d)",
+            disk->header->free_blocks, num_blocks);
+        ONERROR(disk->header->bitmap_blocks != num_blocks, "bitmap size (%d) doesn't match total number of blocks (%d)",
+            disk->header->bitmap_blocks, num_blocks);
     }
 }
 

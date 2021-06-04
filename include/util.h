@@ -4,10 +4,10 @@
 
 #define DEBUG
 
-#define ONERROR(cond, msg) \
+#define ONERROR(cond, fmt, ...) \
     do { \
         if(cond) { \
-            fprintf(stderr, "[%s:%d] ERROR: %s\n", __FILE__, __LINE__, msg); \
+            fprintf(stderr, "[%s:%d] ERROR: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
             exit(EXIT_FAILURE); \
         } \
     } while(0)
