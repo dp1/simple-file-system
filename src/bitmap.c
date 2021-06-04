@@ -1,5 +1,6 @@
 #include "bitmap.h"
 #include <assert.h>
+#include <stdio.h>
 
 BitMapEntryKey BitMap_blockToIndex(int num) {
     BitMapEntryKey key;
@@ -51,4 +52,17 @@ int BitMap_get(BitMap* bmap, int pos) {
     }
 
     return (bmap->entries[key.entry_num] >> key.bit_num) & 1;
+}
+
+void BitMap_print(BitMap *bmap) {
+    printf("BitMap with %d bits:\n", bmap->num_bits);
+    for(int i = 0; i < bmap->num_bits; i++) {
+        int status = BitMap_get(bmap, i);
+        
+        if(status == -1) putchar('?');
+        else if(status == 0) putchar('0');
+        else putchar('1');
+
+        if((i+1)%64 == 0 || i == bmap->num_bits-1) putchar('\n');
+    }
 }

@@ -126,3 +126,13 @@ int DiskDriver_flush(DiskDriver* disk) {
 
     return 0;
 }
+
+void DiskDriver_print(DiskDriver *disk) {
+    printf("Diskdriver(\n");
+    printf("  metadata_size = %d,\n", disk->metadata_size);
+    printf("  num_blocks = %d,\n", disk->header->num_blocks);
+    printf("  bitmap_blocks = %d,\n", disk->header->bitmap_blocks);
+    printf("  bitmap_entries = %d,\n", disk->header->bitmap_entries);
+    printf("  free_blocks = %d\n", disk->header->free_blocks);
+    printf(")\n");
+}

@@ -29,3 +29,6 @@ int BitMap_set(BitMap* bmap, int pos, int status);
 // returns the status of the block at index pos
 // returns -1 if the block isn't in the bitmap
 int BitMap_get(BitMap *bmap, int pos);
+
+// Print the contents of the bitmap to stdout
+void BitMap_print(BitMap *bmap);

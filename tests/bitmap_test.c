@@ -19,5 +19,11 @@ int main(int agc, char** argv) {
     }
     assert(BitMap_find(&bmap, 0, 1) == 128*8);
 
+    assert(BitMap_find(&bmap, 10000000, 1) == -1);
+    assert(BitMap_set(&bmap, 10000000, 1) == -1);
+    assert(BitMap_get(&bmap, 10000000) == -1);
+
+    BitMap_print(&bmap);
+
     printf("Bitmap tests passed\n");
 }

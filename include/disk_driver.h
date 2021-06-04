@@ -50,3 +50,6 @@ int DiskDriver_getFreeBlock(DiskDriver* disk, int start);
 
 // writes the data (flushing the mmaps)
 int DiskDriver_flush(DiskDriver* disk);
+
+// print a description of the driver to stdout
+void DiskDriver_print(DiskDriver *disk);
