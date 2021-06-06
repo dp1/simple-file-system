@@ -144,52 +144,15 @@ int SimpleFS_newDirBlock(DirectoryHandle *d) {
     return new_pos;
 }
 
-FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
-    {
-        FileIterator *it = FileIterator_new(d);
-        FirstFileBlock *ffb;
-        while((ffb = FileIterator_next(it))) {
-            if(!strcmp(ffb->fcb.name, filename)) {
-                DBGPRINT("found duplicate filename");
-                FileIterator_close(it);
-                return NULL; // File exists
-            }
-        }
-        FileIterator_close(it);
-    }
-
-    // There's no duplicate. Let's create the file
-    
+// Add the given block as a children of the directory d
+int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
     DiskDriver *disk = d->sfs->disk;
-    char block[BLOCK_SIZE];
-    DirectoryBlock db;
-
-    int pos;
-    if((pos = DiskDriver_getFreeBlock(disk, 0)) == -1) {
-        return NULL; // No space left on disk
-    }
-
-    if(strlen(filename) >= MAX_FILENAME_LEN) return NULL;
-
-    FirstFileBlock *ffb = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
-    ffb->header.block_in_file = pos;
-    ffb->header.next_block = pos;
-    ffb->header.previous_block = pos;
-    ffb->fcb.directory_block = d->dcb->fcb.block_in_disk;
-    ffb->fcb.block_in_disk = pos;
-    strcpy(ffb->fcb.name, filename);
-    ffb->fcb.size_in_bytes = 0;
-    ffb->fcb.size_in_blocks = 1;
-    ffb->fcb.is_dir = 0;
-
-    DiskDriver_writeBlock(disk, ffb, pos);
-
-    // Now add the file to the current directory
-
     int first_block_entries = sizeof(d->dcb->file_blocks)/sizeof(d->dcb->file_blocks[0]);
+    DirectoryBlock db;
+    char block[BLOCK_SIZE];
 
     if(d->dcb->num_entries < first_block_entries) {
-        d->dcb->file_blocks[d->dcb->num_entries] = pos;
+        d->dcb->file_blocks[d->dcb->num_entries] = child_pos;
     } else {
 
         int cur_block_num = d->dcb->header.next_block;
@@ -218,14 +181,54 @@ FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
             relative_pos -= other_block_entries;
         }
 
-        cur_db->file_blocks[relative_pos] = pos;
+        cur_db->file_blocks[relative_pos] = child_pos;
         DiskDriver_writeBlock(disk, cur_db, cur_block_num);
     }
     
     d->dcb->num_entries++;
     DiskDriver_writeBlock(disk, d->dcb, d->dcb->fcb.block_in_disk);
 
-    // All good, nothing to see here
+    return 0;
+}
+
+FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
+    {
+        FileIterator *it = FileIterator_new(d);
+        FirstFileBlock *ffb;
+        while((ffb = FileIterator_next(it))) {
+            if(!strcmp(ffb->fcb.name, filename)) {
+                DBGPRINT("found duplicate filename");
+                FileIterator_close(it);
+                return NULL; // File exists
+            }
+        }
+        FileIterator_close(it);
+    }
+
+    // There's no duplicate. Let's create the file
+    
+    DiskDriver *disk = d->sfs->disk;
+
+    int pos;
+    if((pos = DiskDriver_getFreeBlock(disk, 0)) == -1) {
+        return NULL; // No space left on disk
+    }
+
+    if(strlen(filename) >= MAX_FILENAME_LEN) return NULL;
+
+    FirstFileBlock *ffb = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
+    ffb->header.block_in_file = pos;
+    ffb->header.next_block = pos;
+    ffb->header.previous_block = pos;
+    ffb->fcb.directory_block = d->dcb->fcb.block_in_disk;
+    ffb->fcb.block_in_disk = pos;
+    strcpy(ffb->fcb.name, filename);
+    ffb->fcb.size_in_bytes = 0;
+    ffb->fcb.size_in_blocks = 1;
+    ffb->fcb.is_dir = 0;
+
+    DiskDriver_writeBlock(disk, ffb, pos);
+    SimpleFS_addToDirectory(d, pos);
 
     FileHandle *fh = (FileHandle *) calloc(1, sizeof(FileHandle));
     fh->sfs = d->sfs;
@@ -281,6 +284,55 @@ int SimpleFS_close(FileHandle* f) {
         free(f->fcb);
         free(f);
     }
+    return 0;
+}
+
+int SimpleFS_closeDir(DirectoryHandle *d) {
+    if(d) {
+        free(d->dcb);
+        free(d);
+    }
+    return 0;
+}
+
+int SimpleFS_mkDir(DirectoryHandle *d, char *dirname) {
+    {
+        FileIterator *it = FileIterator_new(d);
+        FirstFileBlock *ffb;
+        while((ffb = FileIterator_next(it))) {
+            if(!strcmp(ffb->fcb.name, dirname)) {
+                DBGPRINT("found duplicate filename");
+                FileIterator_close(it);
+                return -1; // File exists
+            }
+        }
+        FileIterator_close(it);
+    }
+
+    // There's no duplicate. Let's create the directory
+    
+    DiskDriver *disk = d->sfs->disk;
+
+    int pos;
+    if((pos = DiskDriver_getFreeBlock(disk, 0)) == -1) {
+        return -1; // No space left on disk
+    }
+
+    if(strlen(dirname) >= MAX_FILENAME_LEN) return -1;
+
+    FirstDirectoryBlock *ffb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
+    ffb->header.block_in_file = pos;
+    ffb->header.next_block = pos;
+    ffb->header.previous_block = pos;
+    ffb->fcb.directory_block = d->dcb->fcb.block_in_disk;
+    ffb->fcb.block_in_disk = pos;
+    strcpy(ffb->fcb.name, dirname);
+    ffb->fcb.size_in_bytes = 0;
+    ffb->fcb.size_in_blocks = 1;
+    ffb->fcb.is_dir = 1;
+
+    DiskDriver_writeBlock(disk, ffb, pos);
+    SimpleFS_addToDirectory(d, pos);
     return 0;
 }
 

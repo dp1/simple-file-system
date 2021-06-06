@@ -12,7 +12,7 @@ if [[ ${files[@]} ]]; then
     for test_file in ${files[@]}
     do
         echo -e ${BOLDGREEN}Running $test_file...${ENDCOLOR}
-        ./$test_file
+        valgrind ./$test_file
     done
 
 else

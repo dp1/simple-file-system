@@ -20,7 +20,7 @@ typedef struct {
   int directory_block; // first block of the parent directory
   int block_in_disk;   // repeated position of the block on the disk
   char name[MAX_FILENAME_LEN];
-  int  size_in_bytes;
+  int size_in_bytes;
   int size_in_blocks;
   int is_dir;          // 0 for file, 1 for dir
 } FileControlBlock;
@@ -114,6 +114,8 @@ FileHandle* SimpleFS_openFile(DirectoryHandle* d, const char* filename);
 
 // closes a file handle (destroyes it)
 int SimpleFS_close(FileHandle* f);
+
+int SimpleFS_closeDir(DirectoryHandle *d);
 
 // writes in the file, at current position for size bytes stored in data
 // overwriting and allocating new space if necessary

@@ -1,5 +1,6 @@
 #include "simplefs.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 int main(int agc, char** argv) {
     printf("FirstBlock size %ld\n", sizeof(FirstFileBlock));
@@ -29,11 +30,20 @@ int main(int agc, char** argv) {
     for(int i = 0; i < num_names; i++) {
         printf("  %s\n", names[i]);
     }
+    for(int i = 0; i < num_names; i++) free(names[i]);
 
     printf("Reopening file\n");
     FileHandle *fh = SimpleFS_openFile(dir, "test98.txt");
     FileHandle_print(fh);
     SimpleFS_close(fh);
 
+    SimpleFS_mkDir(dir, "folder");
+    SimpleFS_closeDir(dir);
+
     DiskDriver_flush(&disk);
+
+    dir = SimpleFS_init(&fs, &disk);
+    
+    DirectoryHandle_print(dir);
+    SimpleFS_closeDir(dir);
 }

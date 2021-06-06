@@ -25,5 +25,7 @@ int main(int agc, char** argv) {
 
     BitMap_print(&bmap);
 
+    free(bmap.entries);
+
     printf("Bitmap tests passed\n");
 }
