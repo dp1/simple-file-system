@@ -4,6 +4,60 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    DirectoryHandle *dir;
+    DiskDriver *disk;
+    FirstFileBlock ffb; // current file
+    DirectoryBlock db;  // current directory block
+    int pos;
+    int relative_pos;
+    int next_dir_block;
+} FileIterator;
+
+FileIterator *FileIterator_new(DirectoryHandle *dir) {
+    FileIterator *it = (FileIterator *) calloc(1, sizeof(FileIterator));
+    it->dir = dir;
+    it->disk = dir->sfs->disk;
+    it->pos = -1;
+    it->relative_pos = -1;
+    it->next_dir_block = dir->dcb->header.next_block;
+    return it;
+}
+
+void FileIterator_close(FileIterator *it) {
+    free(it);
+}
+
+FirstFileBlock *FileIterator_next(FileIterator *it) {
+    int file_block;
+
+    ++it->pos;
+    if(it->pos == it->dir->dcb->num_entries) {
+        return NULL; // end of iteration
+    }
+
+    if(it->pos < sizeof(it->dir->dcb->file_blocks)/sizeof(it->dir->dcb->file_blocks[0])) {
+        // This is one of the files stored directly in the first block
+        file_block = it->dir->dcb->file_blocks[it->pos];
+    } else {
+        // Otherwise, it's in one of the other blocks. Read the next
+        // block if necessary
+        if(it->relative_pos == -1 || it->relative_pos == sizeof(it->db.file_blocks)/sizeof(it->db.file_blocks[0])) {
+            it->relative_pos = 0;
+
+            DiskDriver_readBlock(it->disk, &it->db, it->next_dir_block);
+            it->next_dir_block = it->db.header.next_block;
+        }
+        file_block = it->db.file_blocks[it->relative_pos];
+        it->relative_pos++;
+    }
+    
+    DiskDriver_readBlock(it->disk, &it->ffb, file_block);
+    return &it->ffb;
+}
+
+
+
 DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
     fs->disk = disk;
     fs->current_directory_block = 0;
@@ -91,49 +145,31 @@ int SimpleFS_newDirBlock(DirectoryHandle *d) {
 }
 
 FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
-    DiskDriver *disk = d->sfs->disk;
-    char block[BLOCK_SIZE];
-
-    DirectoryBlock db;
-    int next_dir_block = d->dcb->header.next_block;
-
-    for(int pos = 0, relative_pos = -1; pos < d->dcb->num_entries; pos++) {
-        
-        int file_block;
-        
-        if(pos < sizeof(d->dcb->file_blocks)/sizeof(d->dcb->file_blocks[0])) {
-            // This is one of the files stored directly in the first block
-            file_block = d->dcb->file_blocks[pos];
-        } else {
-            // Otherwise, it's in one of the other blocks. Read the next
-            // block if necessary
-            if(relative_pos == -1 || relative_pos == sizeof(db.file_blocks)/sizeof(db.file_blocks[0])) {
-                relative_pos = 0;
-
-                DiskDriver_readBlock(disk, &db, next_dir_block);
-                next_dir_block = db.header.next_block;
+    {
+        FileIterator *it = FileIterator_new(d);
+        FirstFileBlock *ffb;
+        while((ffb = FileIterator_next(it))) {
+            if(!strcmp(ffb->fcb.name, filename)) {
+                DBGPRINT("found duplicate filename");
+                FileIterator_close(it);
+                return NULL; // File exists
             }
-            file_block = db.file_blocks[relative_pos];
-            relative_pos++;
         }
-        
-        DiskDriver_readBlock(disk, block, file_block);
-        FirstFileBlock *ffb = (FirstFileBlock *)block;
-        
-        if(!strcmp(ffb->fcb.name, filename)) {
-            DBGPRINT("found duplicate filename");
-            return NULL; // File exists
-        }
+        FileIterator_close(it);
     }
 
     // There's no duplicate. Let's create the file
+    
+    DiskDriver *disk = d->sfs->disk;
+    char block[BLOCK_SIZE];
+    DirectoryBlock db;
 
     int pos;
     if((pos = DiskDriver_getFreeBlock(disk, 0)) == -1) {
         return NULL; // No space left on disk
     }
 
-    if(strlen(filename) >= 128) return NULL;
+    if(strlen(filename) >= MAX_FILENAME_LEN) return NULL;
 
     FirstFileBlock *ffb = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
     ffb->header.block_in_file = pos;
@@ -198,6 +234,46 @@ FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
     fh->current_block = &ffb->header;
     fh->pos_in_file = 0;
     return fh;
+}
+
+int SimpleFS_readDir(char **names, DirectoryHandle *d) {
+    int names_len = 0;
+    
+    FileIterator *it = FileIterator_new(d);
+    FirstFileBlock *ffb;
+    while((ffb = FileIterator_next(it))) {
+        names[names_len++] = strdup(ffb->fcb.name);
+    }
+    FileIterator_close(it);
+
+    return names_len;
+}
+
+FileHandle *SimpleFS_openFile(DirectoryHandle *d, const char *filename) {
+    FileIterator *it = FileIterator_new(d);
+    FirstFileBlock *ffb;
+    while((ffb = FileIterator_next(it))) {
+        if(!strcmp(ffb->fcb.name, filename)) {
+            
+            // Copy so that we can free the iterator
+            FirstFileBlock *ffb_copy = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
+            memcpy(ffb_copy, ffb, sizeof(FirstFileBlock));
+            
+            FileHandle *fh = (FileHandle *) calloc(1, sizeof(FileHandle));
+            fh->sfs = d->sfs;
+            fh->fcb = ffb_copy;
+            fh->directory = d->dcb;
+            fh->current_block = &ffb_copy->header;
+            fh->pos_in_file = 0;
+
+            FileIterator_close(it);
+            return fh;
+        }
+    }
+    FileIterator_close(it);
+
+    // Not found
+    return NULL;
 }
 
 int SimpleFS_close(FileHandle* f) {

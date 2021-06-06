@@ -2,6 +2,8 @@
 #include "bitmap.h"
 #include "disk_driver.h"
 
+#define MAX_FILENAME_LEN 128
+
 /*these are structures stored on disk*/
 
 // header, occupies the first portion of each block in the disk
@@ -17,7 +19,7 @@ typedef struct {
 typedef struct {
   int directory_block; // first block of the parent directory
   int block_in_disk;   // repeated position of the block on the disk
-  char name[128];
+  char name[MAX_FILENAME_LEN];
   int  size_in_bytes;
   int size_in_blocks;
   int is_dir;          // 0 for file, 1 for dir
@@ -101,9 +103,6 @@ void SimpleFS_format(SimpleFS* fs);
 // returns null on error (file existing, no free blocks)
 // an empty file consists only of a block of type FirstBlock
 FileHandle* SimpleFS_createFile(DirectoryHandle* d, const char* filename);
-
-// Returns the index of the newly allocated block, or -1 if it fails
-int SimpleFS_newDirBlock(DirectoryHandle *d);
 
 // reads in the (preallocated) blocks array, the name of all files in a directory 
 int SimpleFS_readDir(char** names, DirectoryHandle* d);
