@@ -65,7 +65,7 @@ typedef struct {
   
 typedef struct {
   DiskDriver* disk;
-  // add more fields if needed
+  int current_directory_block;
 } SimpleFS;
 
 // this is a file handle, used to refer to open files
@@ -102,6 +102,9 @@ void SimpleFS_format(SimpleFS* fs);
 // an empty file consists only of a block of type FirstBlock
 FileHandle* SimpleFS_createFile(DirectoryHandle* d, const char* filename);
 
+// Returns the index of the newly allocated block, or -1 if it fails
+int SimpleFS_newDirBlock(DirectoryHandle *d);
+
 // reads in the (preallocated) blocks array, the name of all files in a directory 
 int SimpleFS_readDir(char** names, DirectoryHandle* d);
 
@@ -131,7 +134,7 @@ int SimpleFS_seek(FileHandle* f, int pos);
 // seeks for a directory in d. If dirname is equal to ".." it goes one level up
 // 0 on success, negative value on error
 // it does side effect on the provided handle
- int SimpleFS_changeDir(DirectoryHandle* d, char* dirname);
+int SimpleFS_changeDir(DirectoryHandle* d, char* dirname);
 
 // creates a new directory in the current one (stored in fs->current_directory_block)
 // 0 on success
@@ -144,5 +147,13 @@ int SimpleFS_mkDir(DirectoryHandle* d, char* dirname);
 int SimpleFS_remove(SimpleFS* fs, char* filename);
 
 
-  
+// Debug prints
 
+void BlockHeader_print(BlockHeader *b, int spaces);
+void FileControlBlock_print(FileControlBlock *f, int spaces);
+void FirstFileBlock_print(FirstFileBlock *f);
+void FileBlock_print(FileBlock *f);
+void FirstDirectoryBlock_print(FirstDirectoryBlock *f);
+void DirectoryBlock_print(DirectoryBlock *f);
+void DirectoryHandle_print(DirectoryHandle *h);
+void FileHandle_print(FileHandle *h);

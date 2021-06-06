@@ -108,8 +108,9 @@ int DiskDriver_writeBlock(DiskDriver* disk, void* src, int block_num) {
 
 int DiskDriver_freeBlock(DiskDriver* disk, int block_num) {
 
+    int prev = BitMap_get(&disk->bitmap, block_num);
     int res = BitMap_set(&disk->bitmap, block_num, 0);
-    if(res != -1) {
+    if(res != -1 && prev == 1) {
         disk->header->free_blocks++;
     }
     return res;
