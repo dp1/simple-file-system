@@ -3,6 +3,14 @@
 #include "util.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+
+#define sizeof_field(structure, field) sizeof(((structure *)0)->field)
+#define numelements_field(structure, arrayname) (sizeof_field(structure, arrayname)/sizeof_field(structure, arrayname[0]))
+
+// Number of files in a FirstDirectoryBlock and in a DirectoryBlock
+#define FILES_IN_FIRST_DB numelements_field(FirstDirectoryBlock, file_blocks)
+#define FILES_IN_DB numelements_field(DirectoryBlock, file_blocks)
 
 typedef struct {
     DirectoryHandle *dir;
@@ -11,6 +19,7 @@ typedef struct {
     DirectoryBlock db;  // current directory block
     int pos;
     int relative_pos;
+    int cur_dir_block;
     int next_dir_block;
 } FileIterator;
 
@@ -20,6 +29,7 @@ FileIterator *FileIterator_new(DirectoryHandle *dir) {
     it->disk = dir->sfs->disk;
     it->pos = -1;
     it->relative_pos = -1;
+    it->cur_dir_block = dir->dcb->fcb.block_in_disk;
     it->next_dir_block = dir->dcb->header.next_block;
     return it;
 }
@@ -28,35 +38,52 @@ void FileIterator_close(FileIterator *it) {
     free(it);
 }
 
-FirstFileBlock *FileIterator_next(FileIterator *it) {
+// Returns the index of the next file's control block
+int FileIterator_nextidx(FileIterator *it) {
     int file_block;
 
     ++it->pos;
     if(it->pos == it->dir->dcb->num_entries) {
-        return NULL; // end of iteration
+        return -1; // end of iteration
     }
 
-    if(it->pos < sizeof(it->dir->dcb->file_blocks)/sizeof(it->dir->dcb->file_blocks[0])) {
+    if(it->pos < FILES_IN_FIRST_DB) {
         // This is one of the files stored directly in the first block
         file_block = it->dir->dcb->file_blocks[it->pos];
     } else {
         // Otherwise, it's in one of the other blocks. Read the next
         // block if necessary
-        if(it->relative_pos == -1 || it->relative_pos == sizeof(it->db.file_blocks)/sizeof(it->db.file_blocks[0])) {
+        if(it->relative_pos == -1 || it->relative_pos == FILES_IN_DB) {
             it->relative_pos = 0;
 
             DiskDriver_readBlock(it->disk, &it->db, it->next_dir_block);
+            it->cur_dir_block = it->next_dir_block;
             it->next_dir_block = it->db.header.next_block;
         }
         file_block = it->db.file_blocks[it->relative_pos];
         it->relative_pos++;
     }
     
+    return file_block;
+}
+
+FirstFileBlock *FileIterator_next(FileIterator *it) {
+    int file_block = FileIterator_nextidx(it);
+    if(file_block == -1) return NULL;
     DiskDriver_readBlock(it->disk, &it->ffb, file_block);
     return &it->ffb;
 }
 
-
+int FileIterator_update(FileIterator *it, int new_child_idx) {
+    if(it->cur_dir_block == it->dir->dcb->fcb.block_in_disk) {
+        it->dir->dcb->file_blocks[it->pos] = new_child_idx;
+        DiskDriver_writeBlock(it->disk, it->dir->dcb, it->cur_dir_block);
+    } else {
+        it->db.file_blocks[it->relative_pos] = new_child_idx;
+        DiskDriver_writeBlock(it->disk, &it->db, it->cur_dir_block);
+    }
+    return 0;
+}
 
 DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
     fs->disk = disk;
@@ -147,17 +174,14 @@ int SimpleFS_newDirBlock(DirectoryHandle *d) {
 // Add the given block as a children of the directory d
 int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
     DiskDriver *disk = d->sfs->disk;
-    int first_block_entries = sizeof(d->dcb->file_blocks)/sizeof(d->dcb->file_blocks[0]);
-    DirectoryBlock db;
     char block[BLOCK_SIZE];
 
-    if(d->dcb->num_entries < first_block_entries) {
+    if(d->dcb->num_entries < FILES_IN_FIRST_DB) {
         d->dcb->file_blocks[d->dcb->num_entries] = child_pos;
     } else {
 
         int cur_block_num = d->dcb->header.next_block;
-        int relative_pos = d->dcb->num_entries - first_block_entries;
-        int other_block_entries = sizeof(db.file_blocks)/sizeof(db.file_blocks[0]);
+        int relative_pos = d->dcb->num_entries - FILES_IN_FIRST_DB;
 
         // Allocate the first DirectoryBlock if it isn't there already
         if(cur_block_num == d->dcb->fcb.block_in_disk) {
@@ -167,7 +191,7 @@ int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
         DiskDriver_readBlock(disk, block, cur_block_num);
         DirectoryBlock *cur_db = (DirectoryBlock *)block;
 
-        while(relative_pos >= other_block_entries) {
+        while(relative_pos >= FILES_IN_DB) {
             
             // Is this the end of the list? Allocate a new block if so
             if(cur_db->header.next_block == d->dcb->fcb.block_in_disk) {
@@ -178,7 +202,7 @@ int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
 
             DiskDriver_readBlock(disk, block, cur_block_num);
             
-            relative_pos -= other_block_entries;
+            relative_pos -= FILES_IN_DB;
         }
 
         cur_db->file_blocks[relative_pos] = child_pos;
@@ -289,10 +313,58 @@ int SimpleFS_close(FileHandle* f) {
 
 int SimpleFS_closeDir(DirectoryHandle *d) {
     if(d) {
+        if(d->directory) free(d->directory);
         free(d->dcb);
         free(d);
     }
     return 0;
+}
+
+int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
+
+    if(!strcmp("..", dirname)) {
+        if(d->directory != NULL) {
+            
+            free(d->dcb);
+            d->dcb = d->directory;
+            d->current_block = &d->directory->header;
+            d->pos_in_dir = 0;
+            d->pos_in_block = 0;
+
+            FirstDirectoryBlock *fdb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
+            DiskDriver_readBlock(d->sfs->disk, fdb, d->dcb->fcb.directory_block);
+            d->directory = fdb;
+            return 0;
+
+        } else return -1;
+    }
+
+    FileIterator *it = FileIterator_new(d);
+    FirstFileBlock *ffb;
+    while((ffb = FileIterator_next(it))) {
+        if(ffb->fcb.is_dir && !strcmp(ffb->fcb.name, dirname)) {
+            
+            // Copy so that we can free the iterator
+            // Here we use the fact that the layout for directory/file first
+            // blocks is identical up to the fcb, so we can safely read
+            // is_dir/name and cast to a directory block
+            FirstDirectoryBlock *fdb_copy = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
+            memcpy(fdb_copy, ffb, sizeof(FirstDirectoryBlock));
+            
+            free(d->directory);
+            d->directory = d->dcb;
+            d->dcb = fdb_copy;
+            d->current_block = &fdb_copy->header;
+            d->pos_in_dir = 0;
+            d->pos_in_block = 0;
+
+            FileIterator_close(it);
+            return 0;
+        }
+    }
+    FileIterator_close(it);
+
+    return -1; // not found
 }
 
 int SimpleFS_mkDir(DirectoryHandle *d, char *dirname) {
@@ -320,20 +392,120 @@ int SimpleFS_mkDir(DirectoryHandle *d, char *dirname) {
 
     if(strlen(dirname) >= MAX_FILENAME_LEN) return -1;
 
-    FirstDirectoryBlock *ffb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
-    ffb->header.block_in_file = pos;
-    ffb->header.next_block = pos;
-    ffb->header.previous_block = pos;
-    ffb->fcb.directory_block = d->dcb->fcb.block_in_disk;
-    ffb->fcb.block_in_disk = pos;
-    strcpy(ffb->fcb.name, dirname);
-    ffb->fcb.size_in_bytes = 0;
-    ffb->fcb.size_in_blocks = 1;
-    ffb->fcb.is_dir = 1;
+    FirstDirectoryBlock ffb = {0};
+    ffb.header.block_in_file = pos;
+    ffb.header.next_block = pos;
+    ffb.header.previous_block = pos;
+    ffb.fcb.directory_block = d->dcb->fcb.block_in_disk;
+    ffb.fcb.block_in_disk = pos;
+    strcpy(ffb.fcb.name, dirname);
+    ffb.fcb.size_in_bytes = 0;
+    ffb.fcb.size_in_blocks = 1;
+    ffb.fcb.is_dir = 1;
 
-    DiskDriver_writeBlock(disk, ffb, pos);
+    DiskDriver_writeBlock(disk, &ffb, pos);
     SimpleFS_addToDirectory(d, pos);
     return 0;
+}
+
+// Free the linked list of blocks starting with the given header
+static int SimpleFS_removeblocks(DiskDriver *disk, BlockHeader *b, int first_block) {
+    int cur_block = first_block;
+    char block[BLOCK_SIZE];
+
+    DiskDriver_freeBlock(disk, cur_block);
+    cur_block = b->next_block;
+
+    while(cur_block != first_block) {
+        DiskDriver_readBlock(disk, block, cur_block);
+        DiskDriver_freeBlock(disk, cur_block);
+        b = (BlockHeader *)block;
+        cur_block = b->next_block;
+    }
+
+    return 0;
+}
+
+// Remove all the contents of the given folder. The folder is not removed, and is not updated to reflect the missing files
+int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
+    BlockHeader *h = &fdb->header;
+    int first_block = fdb->fcb.block_in_disk;
+    FirstFileBlock ffb;
+    DirectoryBlock db;
+    int entries = fdb->num_entries;
+
+    for(int i = 0; i < entries && i < FILES_IN_FIRST_DB; i++) {
+        DiskDriver_readBlock(disk, &ffb, fdb->file_blocks[i]);
+        SimpleFS_removeblocks(disk, &ffb.header, fdb->file_blocks[i]);
+    }
+    entries -= FILES_IN_FIRST_DB;
+
+    for(; h->next_block != first_block; entries -= FILES_IN_DB) {
+        DiskDriver_readBlock(disk, &db, h->next_block);
+        h = &db.header;
+        for(int j = 0; j < FILES_IN_DB && j < entries; j++) {
+            DiskDriver_readBlock(disk, &ffb, db.file_blocks[j]);
+            SimpleFS_removeblocks(disk, &ffb.header, db.file_blocks[j]);
+        }
+    }
+
+    return 0;
+}
+
+int SimpleFS_remove(DirectoryHandle *d, char *filename) {
+    FileIterator *it = FileIterator_new(d);
+    FirstFileBlock *ffb;
+    while((ffb = FileIterator_next(it))) {
+        if(!strcmp(ffb->fcb.name, filename)) {
+
+            if(ffb->fcb.is_dir) {
+                SimpleFS_removecontents(d->sfs->disk, (FirstDirectoryBlock *) ffb);
+            }
+
+            SimpleFS_removeblocks(d->sfs->disk, &ffb->header, ffb->fcb.block_in_disk);
+
+            // Replace this file in the directory with the last one
+            int last_idx = -1, idx = -1;
+            FileIterator *it2 = FileIterator_new(d);
+            while((idx = FileIterator_nextidx(it2)) != -1) last_idx = idx;
+            FileIterator_close(it2);
+
+            if(last_idx != ffb->fcb.block_in_disk) {
+                FileIterator_update(it, last_idx);
+            }
+            FileIterator_close(it);
+
+            // Shorten the directory by one element. If the element is the only entry in the last DirectoryBlock, free the block
+            if(d->dcb->num_entries > FILES_IN_FIRST_DB) {
+                int relative_pos = (d->dcb->num_entries - 1 - FILES_IN_FIRST_DB) % FILES_IN_DB; // position in the last block
+                DBGPRINT("removing, relative %d", relative_pos);
+                
+                if(relative_pos == 0) {
+                    DirectoryBlock last = {0}, second_to_last = {0};
+                    int last_idx = d->dcb->header.previous_block;
+
+                    DiskDriver_readBlock(d->sfs->disk, &last, last_idx);
+
+                    if(last.header.previous_block == d->dcb->fcb.block_in_disk) {
+                        d->dcb->header.next_block = d->dcb->fcb.block_in_disk;
+                    } else {
+                        DiskDriver_readBlock(d->sfs->disk, &second_to_last, last.header.previous_block);
+                        second_to_last.header.next_block = d->dcb->fcb.block_in_disk;
+                        DiskDriver_writeBlock(d->sfs->disk, &second_to_last, last.header.previous_block);
+                    }
+                    d->dcb->header.previous_block = last.header.previous_block;
+                    DiskDriver_freeBlock(d->sfs->disk, last_idx);
+                    d->dcb->fcb.size_in_blocks--;
+                }
+            }
+            d->dcb->num_entries--;
+            DiskDriver_writeBlock(d->sfs->disk, d->dcb, d->dcb->fcb.block_in_disk);
+
+            return 0;
+        }
+    }
+    FileIterator_close(it);
+    return -1;
 }
 
 
