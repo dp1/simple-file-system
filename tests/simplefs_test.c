@@ -34,6 +34,8 @@ int main(int agc, char** argv) {
     
     SimpleFS_mkDir(dir, "subdir");
     SimpleFS_changeDir(dir, "subdir");
+    SimpleFS_mkDir(dir, "sub2");
+    SimpleFS_changeDir(dir, "sub2");
 
     for(int i = 0; i < 100; i++) {
         sprintf(name, "inner%d.txt", i);
@@ -44,6 +46,7 @@ int main(int agc, char** argv) {
     DirectoryHandle_print(dir);
     readdir(dir);
 
+    SimpleFS_changeDir(dir, "..");
     SimpleFS_changeDir(dir, "..");
     SimpleFS_remove(dir, "subdir");
 

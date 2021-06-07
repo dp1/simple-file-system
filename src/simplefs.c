@@ -436,6 +436,9 @@ int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
 
     for(int i = 0; i < entries && i < FILES_IN_FIRST_DB; i++) {
         DiskDriver_readBlock(disk, &ffb, fdb->file_blocks[i]);
+        if(ffb.fcb.is_dir) {
+            SimpleFS_removecontents(disk, (FirstDirectoryBlock *)&ffb);
+        }
         SimpleFS_removeblocks(disk, &ffb.header, fdb->file_blocks[i]);
     }
     entries -= FILES_IN_FIRST_DB;
@@ -445,6 +448,9 @@ int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
         h = &db.header;
         for(int j = 0; j < FILES_IN_DB && j < entries; j++) {
             DiskDriver_readBlock(disk, &ffb, db.file_blocks[j]);
+            if(ffb.fcb.is_dir) {
+                SimpleFS_removecontents(disk, (FirstDirectoryBlock *)&ffb);
+            }
             SimpleFS_removeblocks(disk, &ffb.header, db.file_blocks[j]);
         }
     }
