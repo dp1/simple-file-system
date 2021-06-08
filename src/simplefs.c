@@ -11,6 +11,8 @@
 // Number of files in a FirstDirectoryBlock and in a DirectoryBlock
 #define FILES_IN_FIRST_DB numelements_field(FirstDirectoryBlock, file_blocks)
 #define FILES_IN_DB numelements_field(DirectoryBlock, file_blocks)
+#define BYTES_IN_FIRST_FB sizeof_field(FirstFileBlock, data)
+#define BYTES_IN_FB sizeof_field(FileBlock, data)
 
 typedef struct {
     DirectoryHandle *dir;
@@ -259,6 +261,7 @@ FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
     fh->fcb = ffb;
     fh->directory = d->dcb;
     fh->current_block = &ffb->header;
+    fh->current_block_pos = ffb->fcb.block_in_disk;
     fh->pos_in_file = 0;
     return fh;
 }
@@ -291,6 +294,7 @@ FileHandle *SimpleFS_openFile(DirectoryHandle *d, const char *filename) {
             fh->fcb = ffb_copy;
             fh->directory = d->dcb;
             fh->current_block = &ffb_copy->header;
+            fh->current_block_pos = ffb_copy->fcb.block_in_disk;
             fh->pos_in_file = 0;
 
             FileIterator_close(it);
@@ -318,6 +322,199 @@ int SimpleFS_closeDir(DirectoryHandle *d) {
         free(d);
     }
     return 0;
+}
+
+// pos_in_file points to the next position to read/write in the file
+// current_block is the last block written to. If pos_in_file is just
+// after a block boundary, a block allocation may be needed if current_block
+// doesn't have a successor
+
+int SimpleFS_write(FileHandle *f, void *data, int size) {
+    DiskDriver *disk = f->sfs->disk;
+    int bytes_written = size;
+
+    while(size > 0) {
+
+        // Fill up the current block
+        if(f->pos_in_file < BYTES_IN_FIRST_FB) {
+            int bytes_to_write = min(BYTES_IN_FIRST_FB - f->pos_in_file, size);
+            memcpy(f->fcb->data + f->pos_in_file, data, bytes_to_write);
+            f->fcb->fcb.size_in_bytes = max(
+                f->fcb->fcb.size_in_bytes,
+                f->pos_in_file + bytes_to_write
+            );
+
+            size -= bytes_to_write;
+            data += bytes_to_write;
+            f->pos_in_file += bytes_to_write;
+            
+        } else {
+            int pos_in_block = (f->pos_in_file - BYTES_IN_FIRST_FB) % BYTES_IN_FB;
+            int bytes_to_write = min(size, BYTES_IN_FB - pos_in_block);
+
+            // Allocate a new block if needed
+            if(pos_in_block == 0 && f->current_block->next_block == f->fcb->fcb.block_in_disk) {
+                int cur_block_pos = f->fcb->header.previous_block;
+                
+                FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
+                fb->header.block_in_file = f->current_block->block_in_file + 1;
+                fb->header.next_block = f->current_block->next_block;
+                fb->header.previous_block = f->fcb->header.previous_block;
+                
+                int fb_pos = DiskDriver_getFreeBlock(disk, 0);
+                if(fb_pos == -1) {
+                    return -1; // no space left
+                }
+                f->current_block->next_block = fb_pos;
+                f->fcb->header.previous_block = fb_pos;
+
+                f->fcb->fcb.size_in_blocks++;
+
+                DiskDriver_writeBlock(disk, f->current_block, cur_block_pos);
+                DiskDriver_writeBlock(disk, fb, fb_pos);
+                
+                if(f->current_block != (BlockHeader *) f->fcb) {
+                    free(f->current_block);
+                }
+                f->current_block = (BlockHeader *) fb;
+                f->current_block_pos = fb_pos;
+
+            } else if(pos_in_block == 0) {
+                // Move to the next block
+                FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
+                DiskDriver_readBlock(disk, fb, f->current_block->next_block);
+                if(f->current_block != (BlockHeader *) f->fcb) {
+                    free(f->current_block);
+                }
+                f->current_block_pos = f->current_block->next_block;
+                f->current_block = (BlockHeader *) fb;
+            }
+
+            memcpy(((FileBlock *)f->current_block)->data + pos_in_block, data, bytes_to_write);
+            DiskDriver_writeBlock(disk, f->current_block, f->current_block_pos);
+            
+            f->fcb->fcb.size_in_bytes = max(
+                f->fcb->fcb.size_in_bytes,
+                f->pos_in_file + bytes_to_write
+            );
+
+            size -= bytes_to_write;
+            data += bytes_to_write;
+            f->pos_in_file += bytes_to_write;
+        }
+    }
+
+    DiskDriver_writeBlock(f->sfs->disk, f->fcb, f->fcb->fcb.block_in_disk);
+    return bytes_written;
+}
+
+int SimpleFS_read(FileHandle *f, void *data, int size) {
+    DiskDriver *disk = f->sfs->disk;
+
+    // If we don't have that many bytes, truncate the request
+    if(f->pos_in_file + size > f->fcb->fcb.size_in_bytes) {
+        size = f->fcb->fcb.size_in_bytes - f->pos_in_file;
+    }
+    int bytes_read = size;
+
+    while(size > 0) {
+
+        if(f->pos_in_file < BYTES_IN_FIRST_FB) {
+            int bytes_to_read = min(BYTES_IN_FIRST_FB - f->pos_in_file, size);
+            memcpy(data, f->fcb->data + f->pos_in_file, bytes_to_read);
+
+            size -= bytes_to_read;
+            data += bytes_to_read;
+            f->pos_in_file += bytes_to_read;
+            
+        } else {
+            int pos_in_block = (f->pos_in_file - BYTES_IN_FIRST_FB) % BYTES_IN_FB;
+            int bytes_to_read = min(size, BYTES_IN_FB - pos_in_block);
+
+            // Load the next block
+            if(pos_in_block == 0) {
+
+                // We should never reach the end of the file with more data to read, as we truncated the request before
+                ONERROR(f->current_block->next_block == f->fcb->fcb.block_in_disk,
+                    "read: end of file reached while reading data");
+                
+                FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
+                DiskDriver_readBlock(disk, fb, f->current_block->next_block);
+                if(f->current_block != (BlockHeader *) f->fcb) {
+                    free(f->current_block);
+                }
+                f->current_block_pos = f->current_block->next_block;
+                f->current_block = (BlockHeader *) fb;
+            }
+
+            memcpy(data, ((FileBlock *)f->current_block)->data + pos_in_block, bytes_to_read);
+            
+            size -= bytes_to_read;
+            data += bytes_to_read;
+            f->pos_in_file += bytes_to_read;
+        }
+    }
+
+    return bytes_read;
+}
+
+int SimpleFS_seek(FileHandle *f, int pos) {
+    DiskDriver *disk = f->sfs->disk;
+
+    // If we don't have that many bytes, truncate the request
+    if(f->pos_in_file + pos > f->fcb->fcb.size_in_bytes || pos < 0) {
+        return -1;
+    }
+    int moved_by = pos - f->pos_in_file;
+
+    // If we need to rewind, go back
+    if(pos < f->pos_in_file) {
+        if(f->current_block == (BlockHeader *) f->fcb) {
+            f->pos_in_file = 0;
+        } else {
+            free(f->current_block);
+            f->current_block = &f->fcb->header;
+            f->current_block_pos = f->fcb->fcb.block_in_disk;
+            f->pos_in_file = 0;
+        }
+    }
+
+    pos -= f->pos_in_file;
+
+    while(pos > 0) {
+
+        if(f->pos_in_file < BYTES_IN_FIRST_FB) {
+            int bytes_to_read = min(BYTES_IN_FIRST_FB - f->pos_in_file, pos);
+
+            pos -= bytes_to_read;
+            f->pos_in_file += bytes_to_read;
+            
+        } else {
+            int pos_in_block = (f->pos_in_file - BYTES_IN_FIRST_FB) % BYTES_IN_FB;
+            int bytes_to_read = min(pos, BYTES_IN_FB - pos_in_block);
+
+            // Load the next block
+            if(pos_in_block == 0) {
+
+                // We should never reach the end of the file with more data to read, as we truncated the request before
+                ONERROR(f->current_block->next_block == f->fcb->fcb.block_in_disk,
+                    "seek: end of file reached while moving");
+                
+                FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
+                DiskDriver_readBlock(disk, fb, f->current_block->next_block);
+                if(f->current_block != (BlockHeader *) f->fcb) {
+                    free(f->current_block);
+                }
+                f->current_block_pos = f->current_block->next_block;
+                f->current_block = (BlockHeader *) fb;
+            }
+
+            pos -= bytes_to_read;
+            f->pos_in_file += bytes_to_read;
+        }
+    }
+
+    return moved_by;
 }
 
 int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
@@ -537,7 +734,7 @@ int SimpleFS_remove(DirectoryHandle *d, char *filename) {
 void BlockHeader_print(BlockHeader *b, int spaces) {
     for(int i = 0; i < spaces; i++) putchar(' ');
     printf("BlockHeader(prev=%d, next=%d, block_in_file=%d)",
-        b->next_block, b->previous_block, b->block_in_file);
+        b->previous_block, b->next_block, b->block_in_file);
 }
 
 void FileControlBlock_print(FileControlBlock *f, int spaces) {

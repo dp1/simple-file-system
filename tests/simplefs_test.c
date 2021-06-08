@@ -1,6 +1,7 @@
 #include "simplefs.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void readdir(DirectoryHandle *dir) {
     printf("readDir:\n");
@@ -24,34 +25,27 @@ int main(int agc, char** argv) {
     SimpleFS fs;
     DirectoryHandle *dir = SimpleFS_init(&fs, &disk);
 
-    char name[64];
-    for(int i = 0; i < 1; i++) {
-        sprintf(name, "test%d.txt", i);
-        FileHandle *fh = SimpleFS_createFile(dir, name);
-        if(fh && i == 99) FileHandle_print(fh);
-        SimpleFS_close(fh);
-    }
-    
-    SimpleFS_mkDir(dir, "subdir");
-    SimpleFS_changeDir(dir, "subdir");
-    SimpleFS_mkDir(dir, "sub2");
-    SimpleFS_changeDir(dir, "sub2");
+    FileHandle *fh = SimpleFS_createFile(dir, "text.txt");
+    if(!fh) fh = SimpleFS_openFile(dir, "text.txt");
 
-    for(int i = 0; i < 100; i++) {
-        sprintf(name, "inner%d.txt", i);
-        SimpleFS_close(SimpleFS_createFile(dir, name));
+    char buf[1024] = {0};
+    for(int i = 0; i < 1024; i += 16) {
+        memcpy(buf + i, "0123456789abcdef", 16);
     }
 
+    SimpleFS_write(fh, buf, 1024);
 
-    DirectoryHandle_print(dir);
-    readdir(dir);
+    FileHandle_print(fh);
+    SimpleFS_close(fh);
 
-    SimpleFS_changeDir(dir, "..");
-    SimpleFS_changeDir(dir, "..");
-    SimpleFS_remove(dir, "subdir");
-
-    DirectoryHandle_print(dir);
-    readdir(dir);
+    fh = SimpleFS_openFile(dir, "text.txt");
+    SimpleFS_seek(fh, 1000);
+    for(int i = 0; i < 10; i++) {
+        char ch;
+        int r = SimpleFS_read(fh, &ch, 1);
+        printf("%c ", ch);
+    }
+    printf("\n");
 
     SimpleFS_closeDir(dir);
 
