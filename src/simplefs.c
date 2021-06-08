@@ -322,6 +322,10 @@ int SimpleFS_closeDir(DirectoryHandle *d) {
 
 int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
 
+    if(!strcmp(".", dirname)) {
+        return 0;
+    }
+
     if(!strcmp("..", dirname)) {
         if(d->directory != NULL) {
             
@@ -337,6 +341,19 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
             return 0;
 
         } else return -1;
+    }
+
+    if(!strcmp("/", dirname)) {
+        free(d->dcb);
+        if(d->directory) free(d->directory);
+        d->pos_in_dir = 0;
+        d->pos_in_block = 0;
+
+        FirstDirectoryBlock *fdb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
+        DiskDriver_readBlock(d->sfs->disk, fdb, 0);
+        d->dcb = fdb;
+        d->current_block = &fdb->header;
+        return 0;
     }
 
     FileIterator *it = FileIterator_new(d);
