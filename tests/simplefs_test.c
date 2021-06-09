@@ -32,7 +32,6 @@ int main(int agc, char** argv) {
 
     char buf[4096];
     char buf2[4096];
-    int res;
 
     printf("Creating test.txt... ");
     FileHandle *fh = SimpleFS_createFile(dir, "test.txt");
@@ -77,9 +76,58 @@ int main(int agc, char** argv) {
         assert(SimpleFS_read(fh, buf2, 16) == 16);
         assert(memcmp(buf+pos, buf2, 16) == 0);
     }
+    assert(SimpleFS_close(fh) == 0); fh = NULL;
     printf("OK\n");
+
+    printf("Creating /a, /b, /a/c, /a/d, /a/e and testing changeDir... ");
+    assert(SimpleFS_mkDir(dir, "a") == 0);
+    assert(SimpleFS_mkDir(dir, "b") == 0);
+    assert(SimpleFS_changeDir(dir, "a") == 0);
+    assert(strcmp("a", dir->dcb->fcb.name) == 0);
+    assert(SimpleFS_changeDir(dir, ".") == 0);
+    assert(strcmp("a", dir->dcb->fcb.name) == 0);
+
+    assert(SimpleFS_mkDir(dir, "c") == 0);
+    assert(SimpleFS_mkDir(dir, "d") == 0);
+    assert(SimpleFS_mkDir(dir, "e") == 0);
+    assert(SimpleFS_changeDir(dir, "..") == 0);
+    assert(strcmp("/", dir->dcb->fcb.name) == 0);
+    assert(SimpleFS_changeDir(dir, "..") == -1);
+    assert(SimpleFS_changeDir(dir, "invalid-name") == -1);
+    printf("OK\n");
+
+    printf("Creating 200 files in /a/c... ");
+    SimpleFS_changeDir(dir, "a");
+    SimpleFS_changeDir(dir, "c");
+    for(int i = 0; i < 200; i++) {
+        char name[60];
+        sprintf(name, "file%d.txt", i);
+        fh = SimpleFS_createFile(dir, name);
+        assert(fh != NULL);
+        SimpleFS_close(fh);
+    }
+
+    char *names[200];
+    assert(SimpleFS_readDir(names, dir) == 200);
+
+    for(int i = 0; i < 200; i++) {
+        char name[60];
+        sprintf(name, "file%d.txt", i);
+        assert(strcmp(name, names[i]) == 0);
+        free(names[i]);
+    }
     
-    SimpleFS_close(fh);
+    printf("OK\n");
+
+    printf("Removing /a/c/file0.txt, /a and /test.txt... ");
+    int free_blocks = fs.disk->header->free_blocks;
+    assert(SimpleFS_remove(dir, "file0.txt") == 0);
+    assert(fs.disk->header->free_blocks == free_blocks + 1);
+    SimpleFS_changeDir(dir, "/");
+    assert(SimpleFS_remove(dir, "test.txt") == 0);
+    assert(SimpleFS_remove(dir, "a") == 0);
+    assert(fs.disk->header->free_blocks == free_blocks + 214);
+    printf("OK\n");
 
     DiskDriver_flush(&disk);
 }

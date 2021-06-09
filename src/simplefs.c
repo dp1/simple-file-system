@@ -93,6 +93,9 @@ void free_cwd(void) {
     if(cwd.dcb) {
         free(cwd.dcb);
     }
+    if(cwd.directory) {
+        free(cwd.directory);
+    }
 }
 
 DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
@@ -473,7 +476,6 @@ int SimpleFS_seek(FileHandle *f, int pos) {
 
     // If we need to rewind, go back
     if(pos < f->pos_in_file) {
-        DBGPRINT("seeking to 0, then %d", pos);
         if(f->current_block == (BlockHeader *) f->fcb) {
             f->pos_in_file = 0;
         } else {
@@ -483,7 +485,6 @@ int SimpleFS_seek(FileHandle *f, int pos) {
             f->pos_in_file = 0;
         }
     } else {
-        DBGPRINT("Seeking normally to %d, offset %d", pos, pos - f->pos_in_file);
         pos -= f->pos_in_file;
     }
 
@@ -507,12 +508,13 @@ int SimpleFS_seek(FileHandle *f, int pos) {
                 ONERROR(f->current_block->next_block == f->fcb->fcb.block_in_disk,
                     "seek: end of file reached while moving");
                 
+                int next_block = f->current_block->next_block;
                 FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
-                DiskDriver_readBlock(disk, fb, f->current_block->next_block);
+                DiskDriver_readBlock(disk, fb, next_block);
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
                 }
-                f->current_block_pos = f->current_block->next_block;
+                f->current_block_pos = next_block;
                 f->current_block = (BlockHeader *) fb;
             }
 
@@ -539,9 +541,15 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
             d->pos_in_dir = 0;
             d->pos_in_block = 0;
 
-            FirstDirectoryBlock *fdb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
-            DiskDriver_readBlock(d->sfs->disk, fdb, d->dcb->fcb.directory_block);
-            d->directory = fdb;
+            if(d->dcb->fcb.directory_block != -1) {
+                FirstDirectoryBlock *fdb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
+                int res = DiskDriver_readBlock(d->sfs->disk, fdb, d->dcb->fcb.directory_block);
+                ONERROR(res == -1, "invalid read");
+                d->directory = fdb;
+            } else {
+                d->directory = NULL;
+            }
+
             return 0;
 
         } else return -1;
@@ -550,6 +558,7 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
     if(!strcmp("/", dirname)) {
         free(d->dcb);
         if(d->directory) free(d->directory);
+        d->directory = NULL;
         d->pos_in_dir = 0;
         d->pos_in_block = 0;
 
@@ -808,7 +817,7 @@ void FileHandle_print(FileHandle *h) {
     BlockHeader *bh = &h->fcb->header;
     int start_idx = h->fcb->fcb.block_in_disk;
     char block[BLOCK_SIZE];
-    
+
     FirstFileBlock_print((FirstFileBlock *)bh);
 
     while(bh->next_block != start_idx) {
