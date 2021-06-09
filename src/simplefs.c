@@ -29,6 +29,7 @@ typedef struct {
 
 FileIterator *FileIterator_new(DirectoryHandle *dir) {
     FileIterator *it = (FileIterator *) calloc(1, sizeof(FileIterator));
+    ONERROR(it == NULL, "calloc failed");
     it->dir = dir;
     it->disk = dir->sfs->disk;
     it->pos = -1;
@@ -44,6 +45,7 @@ void FileIterator_close(FileIterator *it) {
 
 // Returns the index of the next file's control block
 int FileIterator_nextidx(FileIterator *it) {
+    int res;
     int file_block;
 
     ++it->pos;
@@ -60,7 +62,8 @@ int FileIterator_nextidx(FileIterator *it) {
         if(it->relative_pos == -1 || it->relative_pos == FILES_IN_DB) {
             it->relative_pos = 0;
 
-            DiskDriver_readBlock(it->disk, &it->db, it->next_dir_block);
+            res = DiskDriver_readBlock(it->disk, &it->db, it->next_dir_block);
+            ONERROR(res == -1, "read failed");
             it->cur_dir_block = it->next_dir_block;
             it->next_dir_block = it->db.header.next_block;
         }
@@ -72,19 +75,24 @@ int FileIterator_nextidx(FileIterator *it) {
 }
 
 FirstFileBlock *FileIterator_next(FileIterator *it) {
+    int res;
     int file_block = FileIterator_nextidx(it);
     if(file_block == -1) return NULL;
-    DiskDriver_readBlock(it->disk, &it->ffb, file_block);
+    res = DiskDriver_readBlock(it->disk, &it->ffb, file_block);
+    ONERROR(res == -1, "read failed");
     return &it->ffb;
 }
 
 int FileIterator_update(FileIterator *it, int new_child_idx) {
+    int res;
     if(it->cur_dir_block == it->dir->dcb->fcb.block_in_disk) {
         it->dir->dcb->file_blocks[it->pos] = new_child_idx;
-        DiskDriver_writeBlock(it->disk, it->dir->dcb, it->cur_dir_block);
+        res = DiskDriver_writeBlock(it->disk, it->dir->dcb, it->cur_dir_block);
+        ONERROR(res == -1, "write failed");
     } else {
         it->db.file_blocks[it->relative_pos] = new_child_idx;
-        DiskDriver_writeBlock(it->disk, &it->db, it->cur_dir_block);
+        res = DiskDriver_writeBlock(it->disk, &it->db, it->cur_dir_block);
+        ONERROR(res == -1, "write failed");
     }
     return 0;
 }
@@ -99,15 +107,18 @@ void free_cwd(void) {
 }
 
 DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
+    int res;
     fs->disk = disk;
     fs->current_directory_block = 0;
 
     FirstDirectoryBlock *dcb = (FirstDirectoryBlock *) malloc(sizeof(FirstDirectoryBlock));
+    ONERROR(dcb == NULL, "malloc failed");
     if(DiskDriver_readBlock(disk, dcb, 0) != 0) {
         DBGPRINT("The disk seems to be empty. Formatting...");
 
         SimpleFS_format(fs);
-        DiskDriver_readBlock(disk, dcb, 0);
+        res = DiskDriver_readBlock(disk, dcb, 0);
+        ONERROR(res == -1, "read failed");
     }
 
     cwd.sfs = fs;
@@ -123,10 +134,12 @@ DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
 }
 
 void SimpleFS_format(SimpleFS *fs) {
+    int res;
 
     // Deallocate all blocks on disk
     for(int i = 0; i < fs->disk->header->num_blocks; i++) {
-        DiskDriver_freeBlock(fs->disk, i);
+        res = DiskDriver_freeBlock(fs->disk, i);
+        ONERROR(res == -1, "free failed");
     }
 
     FirstDirectoryBlock dcb;
@@ -145,10 +158,12 @@ void SimpleFS_format(SimpleFS *fs) {
 
     dcb.num_entries = 0;
 
-    DiskDriver_writeBlock(fs->disk, &dcb, 0);
+    res = DiskDriver_writeBlock(fs->disk, &dcb, 0);
+    ONERROR(res == -1, "write failed");
 }
 
 int SimpleFS_newDirBlock(DirectoryHandle *d) {
+    int res;
     DiskDriver *disk = d->sfs->disk;
     BlockHeader *cur_block = (BlockHeader *) d->dcb;
     int start_block_num = d->dcb->fcb.block_in_disk;
@@ -157,7 +172,8 @@ int SimpleFS_newDirBlock(DirectoryHandle *d) {
 
     while(cur_block->next_block != start_block_num) {
         cur_block_num = cur_block->next_block;
-        DiskDriver_readBlock(disk, block, cur_block->next_block);
+        res = DiskDriver_readBlock(disk, block, cur_block->next_block);
+        ONERROR(res == -1, "read failed");
         cur_block = (BlockHeader *)block;
     }
 
@@ -174,20 +190,24 @@ int SimpleFS_newDirBlock(DirectoryHandle *d) {
         return -1;
     }
 
-    DiskDriver_writeBlock(disk, &db, new_pos);
+    res = DiskDriver_writeBlock(disk, &db, new_pos);
+    ONERROR(res == -1, "write failed");
 
     cur_block->next_block = new_pos;
-    DiskDriver_writeBlock(disk, cur_block, cur_block_num);
+    res = DiskDriver_writeBlock(disk, cur_block, cur_block_num);
+    ONERROR(res == -1, "write failed");
 
     d->dcb->header.previous_block = new_pos;
     d->dcb->fcb.size_in_blocks++;
-    DiskDriver_writeBlock(disk, d->dcb, start_block_num);
+    res = DiskDriver_writeBlock(disk, d->dcb, start_block_num);
+    ONERROR(res == -1, "write failed");
 
     return new_pos;
 }
 
 // Add the given block as a children of the directory d
 int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
+    int res;
     DiskDriver *disk = d->sfs->disk;
     char block[BLOCK_SIZE];
 
@@ -201,9 +221,11 @@ int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
         // Allocate the first DirectoryBlock if it isn't there already
         if(cur_block_num == d->dcb->fcb.block_in_disk) {
             cur_block_num = SimpleFS_newDirBlock(d);
+            if(cur_block_num == -1) return -1; // out of space
         }
 
-        DiskDriver_readBlock(disk, block, cur_block_num);
+        res = DiskDriver_readBlock(disk, block, cur_block_num);
+        ONERROR(res == -1, "read failed");
         DirectoryBlock *cur_db = (DirectoryBlock *)block;
 
         while(relative_pos >= FILES_IN_DB) {
@@ -211,26 +233,31 @@ int SimpleFS_addToDirectory(DirectoryHandle *d, int child_pos) {
             // Is this the end of the list? Allocate a new block if so
             if(cur_db->header.next_block == d->dcb->fcb.block_in_disk) {
                 cur_block_num = SimpleFS_newDirBlock(d);
+                if(cur_block_num == -1) return -1; // out of space
             } else {
                 cur_block_num = cur_db->header.next_block;
             }
 
-            DiskDriver_readBlock(disk, block, cur_block_num);
+            res = DiskDriver_readBlock(disk, block, cur_block_num);
+            ONERROR(res == -1, "read failed");
             
             relative_pos -= FILES_IN_DB;
         }
 
         cur_db->file_blocks[relative_pos] = child_pos;
-        DiskDriver_writeBlock(disk, cur_db, cur_block_num);
+        res = DiskDriver_writeBlock(disk, cur_db, cur_block_num);
+        ONERROR(res == -1, "write failed");
     }
     
     d->dcb->num_entries++;
-    DiskDriver_writeBlock(disk, d->dcb, d->dcb->fcb.block_in_disk);
+    res = DiskDriver_writeBlock(disk, d->dcb, d->dcb->fcb.block_in_disk);
+    ONERROR(res == -1, "write failed");
 
     return 0;
 }
 
 FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
+    int res;
     {
         FileIterator *it = FileIterator_new(d);
         FirstFileBlock *ffb;
@@ -256,6 +283,7 @@ FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
     if(strlen(filename) >= MAX_FILENAME_LEN) return NULL;
 
     FirstFileBlock *ffb = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
+    ONERROR(!ffb, "calloc failed");
     ffb->header.block_in_file = 0;
     ffb->header.next_block = pos;
     ffb->header.previous_block = pos;
@@ -266,10 +294,18 @@ FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
     ffb->fcb.size_in_blocks = 1;
     ffb->fcb.is_dir = 0;
 
-    DiskDriver_writeBlock(disk, ffb, pos);
-    SimpleFS_addToDirectory(d, pos);
+    res = DiskDriver_writeBlock(disk, ffb, pos);
+    ONERROR(res == -1, "write failed");
+    res = SimpleFS_addToDirectory(d, pos);
+    if(res == -1) {
+        // No space left on device to expand the directory
+        res = DiskDriver_freeBlock(disk, pos);
+        ONERROR(res == -1, "free failed");
+        return NULL;
+    }
 
     FileHandle *fh = (FileHandle *) calloc(1, sizeof(FileHandle));
+    ONERROR(!fh, "calloc failed");
     fh->sfs = d->sfs;
     fh->fcb = ffb;
     fh->directory = d->dcb;
@@ -300,9 +336,11 @@ FileHandle *SimpleFS_openFile(DirectoryHandle *d, const char *filename) {
             
             // Copy so that we can free the iterator
             FirstFileBlock *ffb_copy = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
+            ONERROR(!ffb_copy, "calloc failed");
             memcpy(ffb_copy, ffb, sizeof(FirstFileBlock));
             
             FileHandle *fh = (FileHandle *) calloc(1, sizeof(FileHandle));
+            ONERROR(!fh, "calloc failed");
             fh->sfs = d->sfs;
             fh->fcb = ffb_copy;
             fh->directory = d->dcb;
@@ -335,6 +373,7 @@ int SimpleFS_close(FileHandle* f) {
 // doesn't have a successor
 
 int SimpleFS_write(FileHandle *f, void *data, int size) {
+    int res;
     DiskDriver *disk = f->sfs->disk;
     int bytes_written = size;
 
@@ -375,8 +414,10 @@ int SimpleFS_write(FileHandle *f, void *data, int size) {
 
                 f->fcb->fcb.size_in_blocks++;
 
-                DiskDriver_writeBlock(disk, f->current_block, cur_block_pos);
-                DiskDriver_writeBlock(disk, fb, fb_pos);
+                res = DiskDriver_writeBlock(disk, f->current_block, cur_block_pos);
+                ONERROR(res == -1, "write failed");
+                res = DiskDriver_writeBlock(disk, fb, fb_pos);
+                ONERROR(res == -1, "write failed");
                 
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
@@ -388,7 +429,9 @@ int SimpleFS_write(FileHandle *f, void *data, int size) {
                 // Move to the next block
                 int next_block = f->current_block->next_block;
                 FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
-                DiskDriver_readBlock(disk, fb, next_block);
+                ONERROR(!fb, "calloc failed");
+                res = DiskDriver_readBlock(disk, fb, next_block);
+                ONERROR(res == -1, "read failed");
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
                 }
@@ -397,7 +440,8 @@ int SimpleFS_write(FileHandle *f, void *data, int size) {
             }
 
             memcpy(((FileBlock *)f->current_block)->data + pos_in_block, data, bytes_to_write);
-            DiskDriver_writeBlock(disk, f->current_block, f->current_block_pos);
+            res = DiskDriver_writeBlock(disk, f->current_block, f->current_block_pos);
+            ONERROR(res == -1, "write failed");
             
             f->fcb->fcb.size_in_bytes = max(
                 f->fcb->fcb.size_in_bytes,
@@ -410,11 +454,13 @@ int SimpleFS_write(FileHandle *f, void *data, int size) {
         }
     }
 
-    DiskDriver_writeBlock(f->sfs->disk, f->fcb, f->fcb->fcb.block_in_disk);
+    res = DiskDriver_writeBlock(f->sfs->disk, f->fcb, f->fcb->fcb.block_in_disk);
+    ONERROR(res == -1, "write failed");
     return bytes_written;
 }
 
 int SimpleFS_read(FileHandle *f, void *data, int size) {
+    int res;
     DiskDriver *disk = f->sfs->disk;
 
     // If we don't have that many bytes, truncate the request
@@ -446,7 +492,9 @@ int SimpleFS_read(FileHandle *f, void *data, int size) {
                 
                 int next_block = f->current_block->next_block;
                 FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
-                DiskDriver_readBlock(disk, fb, next_block);
+                ONERROR(!fb, "calloc failed");
+                res = DiskDriver_readBlock(disk, fb, next_block);
+                ONERROR(res == -1, "read failed");
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
                 }
@@ -466,6 +514,7 @@ int SimpleFS_read(FileHandle *f, void *data, int size) {
 }
 
 int SimpleFS_seek(FileHandle *f, int pos) {
+    int res;
     DiskDriver *disk = f->sfs->disk;
 
     // If we don't have that many bytes, truncate the request
@@ -510,7 +559,9 @@ int SimpleFS_seek(FileHandle *f, int pos) {
                 
                 int next_block = f->current_block->next_block;
                 FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
-                DiskDriver_readBlock(disk, fb, next_block);
+                ONERROR(!fb, "calloc failed");
+                res = DiskDriver_readBlock(disk, fb, next_block);
+                ONERROR(res == -1, "read failed");
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
                 }
@@ -527,6 +578,7 @@ int SimpleFS_seek(FileHandle *f, int pos) {
 }
 
 int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
+    int res;
 
     if(!strcmp(".", dirname)) {
         return 0;
@@ -543,8 +595,9 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
 
             if(d->dcb->fcb.directory_block != -1) {
                 FirstDirectoryBlock *fdb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
-                int res = DiskDriver_readBlock(d->sfs->disk, fdb, d->dcb->fcb.directory_block);
-                ONERROR(res == -1, "invalid read");
+                ONERROR(!fdb, "calloc failed");
+                res = DiskDriver_readBlock(d->sfs->disk, fdb, d->dcb->fcb.directory_block);
+                ONERROR(res == -1, "read failed");
                 d->directory = fdb;
             } else {
                 d->directory = NULL;
@@ -563,7 +616,9 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
         d->pos_in_block = 0;
 
         FirstDirectoryBlock *fdb = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
-        DiskDriver_readBlock(d->sfs->disk, fdb, 0);
+        ONERROR(!fdb, "calloc failed");
+        res = DiskDriver_readBlock(d->sfs->disk, fdb, 0);
+        ONERROR(res == -1, "read failed");
         d->dcb = fdb;
         d->current_block = &fdb->header;
         return 0;
@@ -579,6 +634,7 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
             // blocks is identical up to the fcb, so we can safely read
             // is_dir/name and cast to a directory block
             FirstDirectoryBlock *fdb_copy = (FirstDirectoryBlock *) calloc(1, sizeof(FirstDirectoryBlock));
+            ONERROR(!fdb_copy, "calloc failed");
             memcpy(fdb_copy, ffb, sizeof(FirstDirectoryBlock));
             
             free(d->directory);
@@ -598,6 +654,7 @@ int SimpleFS_changeDir(DirectoryHandle *d, char *dirname) {
 }
 
 int SimpleFS_mkDir(DirectoryHandle *d, char *dirname) {
+    int res;
     {
         FileIterator *it = FileIterator_new(d);
         FirstFileBlock *ffb;
@@ -633,22 +690,33 @@ int SimpleFS_mkDir(DirectoryHandle *d, char *dirname) {
     ffb.fcb.size_in_blocks = 1;
     ffb.fcb.is_dir = 1;
 
-    DiskDriver_writeBlock(disk, &ffb, pos);
-    SimpleFS_addToDirectory(d, pos);
+    res = DiskDriver_writeBlock(disk, &ffb, pos);
+    ONERROR(res == -1, "write failed");
+    res = SimpleFS_addToDirectory(d, pos);
+    if(res == -1) {
+        // No space left to expand directory
+        res = DiskDriver_freeBlock(disk, pos);
+        ONERROR(res == -1, "free failed");
+        return -1;
+    }
     return 0;
 }
 
 // Free the linked list of blocks starting with the given header
 static int SimpleFS_removeblocks(DiskDriver *disk, BlockHeader *b, int first_block) {
+    int res;
     int cur_block = first_block;
     char block[BLOCK_SIZE];
 
-    DiskDriver_freeBlock(disk, cur_block);
+    res = DiskDriver_freeBlock(disk, cur_block);
+    ONERROR(res == -1, "free failed");
     cur_block = b->next_block;
 
     while(cur_block != first_block) {
-        DiskDriver_readBlock(disk, block, cur_block);
-        DiskDriver_freeBlock(disk, cur_block);
+        res = DiskDriver_readBlock(disk, block, cur_block);
+        ONERROR(res == -1, "read failed");
+        res = DiskDriver_freeBlock(disk, cur_block);
+        ONERROR(res == -1, "free failed");
         b = (BlockHeader *)block;
         cur_block = b->next_block;
     }
@@ -658,6 +726,7 @@ static int SimpleFS_removeblocks(DiskDriver *disk, BlockHeader *b, int first_blo
 
 // Remove all the contents of the given folder. The folder is not removed, and is not updated to reflect the missing files
 int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
+    int res;
     BlockHeader *h = &fdb->header;
     int first_block = fdb->fcb.block_in_disk;
     FirstFileBlock ffb;
@@ -665,7 +734,8 @@ int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
     int entries = fdb->num_entries;
 
     for(int i = 0; i < entries && i < FILES_IN_FIRST_DB; i++) {
-        DiskDriver_readBlock(disk, &ffb, fdb->file_blocks[i]);
+        res = DiskDriver_readBlock(disk, &ffb, fdb->file_blocks[i]);
+        ONERROR(res == -1, "read failed");
         if(ffb.fcb.is_dir) {
             SimpleFS_removecontents(disk, (FirstDirectoryBlock *)&ffb);
         }
@@ -674,10 +744,12 @@ int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
     entries -= FILES_IN_FIRST_DB;
 
     for(; h->next_block != first_block; entries -= FILES_IN_DB) {
-        DiskDriver_readBlock(disk, &db, h->next_block);
+        res = DiskDriver_readBlock(disk, &db, h->next_block);
+        ONERROR(res == -1, "read failed");
         h = &db.header;
         for(int j = 0; j < FILES_IN_DB && j < entries; j++) {
-            DiskDriver_readBlock(disk, &ffb, db.file_blocks[j]);
+            res = DiskDriver_readBlock(disk, &ffb, db.file_blocks[j]);
+            ONERROR(res == -1, "read failed");
             if(ffb.fcb.is_dir) {
                 SimpleFS_removecontents(disk, (FirstDirectoryBlock *)&ffb);
             }
@@ -689,6 +761,7 @@ int SimpleFS_removecontents(DiskDriver *disk, FirstDirectoryBlock *fdb) {
 }
 
 int SimpleFS_remove(DirectoryHandle *d, char *filename) {
+    int res;
     FileIterator *it = FileIterator_new(d);
     FirstFileBlock *ffb;
     while((ffb = FileIterator_next(it))) {
@@ -720,22 +793,27 @@ int SimpleFS_remove(DirectoryHandle *d, char *filename) {
                     DirectoryBlock last = {0}, second_to_last = {0};
                     int last_idx = d->dcb->header.previous_block;
 
-                    DiskDriver_readBlock(d->sfs->disk, &last, last_idx);
+                    res = DiskDriver_readBlock(d->sfs->disk, &last, last_idx);
+                    ONERROR(res == -1, "read failed");
 
                     if(last.header.previous_block == d->dcb->fcb.block_in_disk) {
                         d->dcb->header.next_block = d->dcb->fcb.block_in_disk;
                     } else {
-                        DiskDriver_readBlock(d->sfs->disk, &second_to_last, last.header.previous_block);
+                        res = DiskDriver_readBlock(d->sfs->disk, &second_to_last, last.header.previous_block);
+                        ONERROR(res == -1, "read failed");
                         second_to_last.header.next_block = d->dcb->fcb.block_in_disk;
-                        DiskDriver_writeBlock(d->sfs->disk, &second_to_last, last.header.previous_block);
+                        res = DiskDriver_writeBlock(d->sfs->disk, &second_to_last, last.header.previous_block);
+                        ONERROR(res == -1, "write failed");
                     }
                     d->dcb->header.previous_block = last.header.previous_block;
-                    DiskDriver_freeBlock(d->sfs->disk, last_idx);
+                    res = DiskDriver_freeBlock(d->sfs->disk, last_idx);
+                    ONERROR(res == -1, "free failed");
                     d->dcb->fcb.size_in_blocks--;
                 }
             }
             d->dcb->num_entries--;
-            DiskDriver_writeBlock(d->sfs->disk, d->dcb, d->dcb->fcb.block_in_disk);
+            res = DiskDriver_writeBlock(d->sfs->disk, d->dcb, d->dcb->fcb.block_in_disk);
+            ONERROR(res == -1, "write failed");
 
             return 0;
         }
