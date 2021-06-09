@@ -14,6 +14,8 @@
 #define BYTES_IN_FIRST_FB sizeof_field(FirstFileBlock, data)
 #define BYTES_IN_FB sizeof_field(FileBlock, data)
 
+DirectoryHandle cwd; // current directory
+
 typedef struct {
     DirectoryHandle *dir;
     DiskDriver *disk;
@@ -87,6 +89,12 @@ int FileIterator_update(FileIterator *it, int new_child_idx) {
     return 0;
 }
 
+void free_cwd(void) {
+    if(cwd.dcb) {
+        free(cwd.dcb);
+    }
+}
+
 DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
     fs->disk = disk;
     fs->current_directory_block = 0;
@@ -99,14 +107,16 @@ DirectoryHandle *SimpleFS_init(SimpleFS *fs, DiskDriver *disk) {
         DiskDriver_readBlock(disk, dcb, 0);
     }
 
-    DirectoryHandle *root = (DirectoryHandle *) calloc(1, sizeof(DirectoryHandle));
-    root->sfs = fs;
-    root->dcb = dcb;
-    root->directory = NULL;
-    root->current_block = &dcb->header;
-    root->pos_in_block = 0;
-    root->pos_in_dir = 0;
-    return root;
+    cwd.sfs = fs;
+    cwd.dcb = dcb;
+    cwd.directory = NULL;
+    cwd.current_block = &dcb->header;
+    cwd.pos_in_block = 0;
+    cwd.pos_in_dir = 0;
+
+    atexit(free_cwd);
+
+    return &cwd;
 }
 
 void SimpleFS_format(SimpleFS *fs) {
@@ -243,7 +253,7 @@ FileHandle *SimpleFS_createFile(DirectoryHandle *d, const char *filename) {
     if(strlen(filename) >= MAX_FILENAME_LEN) return NULL;
 
     FirstFileBlock *ffb = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));
-    ffb->header.block_in_file = pos;
+    ffb->header.block_in_file = 0;
     ffb->header.next_block = pos;
     ffb->header.previous_block = pos;
     ffb->fcb.directory_block = d->dcb->fcb.block_in_disk;
@@ -309,17 +319,9 @@ FileHandle *SimpleFS_openFile(DirectoryHandle *d, const char *filename) {
 
 int SimpleFS_close(FileHandle* f) {
     if(f) {
+        if(f->current_block != (BlockHeader *) f->fcb) free(f->current_block);
         free(f->fcb);
         free(f);
-    }
-    return 0;
-}
-
-int SimpleFS_closeDir(DirectoryHandle *d) {
-    if(d) {
-        if(d->directory) free(d->directory);
-        free(d->dcb);
-        free(d);
     }
     return 0;
 }
@@ -381,12 +383,13 @@ int SimpleFS_write(FileHandle *f, void *data, int size) {
 
             } else if(pos_in_block == 0) {
                 // Move to the next block
+                int next_block = f->current_block->next_block;
                 FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
-                DiskDriver_readBlock(disk, fb, f->current_block->next_block);
+                DiskDriver_readBlock(disk, fb, next_block);
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
                 }
-                f->current_block_pos = f->current_block->next_block;
+                f->current_block_pos = next_block;
                 f->current_block = (BlockHeader *) fb;
             }
 
@@ -438,12 +441,13 @@ int SimpleFS_read(FileHandle *f, void *data, int size) {
                 ONERROR(f->current_block->next_block == f->fcb->fcb.block_in_disk,
                     "read: end of file reached while reading data");
                 
+                int next_block = f->current_block->next_block;
                 FileBlock *fb = (FileBlock *) calloc(1, sizeof(FileBlock));
-                DiskDriver_readBlock(disk, fb, f->current_block->next_block);
+                DiskDriver_readBlock(disk, fb, next_block);
                 if(f->current_block != (BlockHeader *) f->fcb) {
                     free(f->current_block);
                 }
-                f->current_block_pos = f->current_block->next_block;
+                f->current_block_pos = next_block;
                 f->current_block = (BlockHeader *) fb;
             }
 
@@ -462,13 +466,14 @@ int SimpleFS_seek(FileHandle *f, int pos) {
     DiskDriver *disk = f->sfs->disk;
 
     // If we don't have that many bytes, truncate the request
-    if(f->pos_in_file + pos > f->fcb->fcb.size_in_bytes || pos < 0) {
+    if(pos > f->fcb->fcb.size_in_bytes || pos < 0) {
         return -1;
     }
     int moved_by = pos - f->pos_in_file;
 
     // If we need to rewind, go back
     if(pos < f->pos_in_file) {
+        DBGPRINT("seeking to 0, then %d", pos);
         if(f->current_block == (BlockHeader *) f->fcb) {
             f->pos_in_file = 0;
         } else {
@@ -477,9 +482,11 @@ int SimpleFS_seek(FileHandle *f, int pos) {
             f->current_block_pos = f->fcb->fcb.block_in_disk;
             f->pos_in_file = 0;
         }
+    } else {
+        DBGPRINT("Seeking normally to %d, offset %d", pos, pos - f->pos_in_file);
+        pos -= f->pos_in_file;
     }
 
-    pos -= f->pos_in_file;
 
     while(pos > 0) {
 
@@ -607,7 +614,7 @@ int SimpleFS_mkDir(DirectoryHandle *d, char *dirname) {
     if(strlen(dirname) >= MAX_FILENAME_LEN) return -1;
 
     FirstDirectoryBlock ffb = {0};
-    ffb.header.block_in_file = pos;
+    ffb.header.block_in_file = 0;
     ffb.header.next_block = pos;
     ffb.header.previous_block = pos;
     ffb.fcb.directory_block = d->dcb->fcb.block_in_disk;
