@@ -14,6 +14,8 @@ int BitMap_indexToBlock(int entry, uint8_t bit_num) {
 }
 
 int BitMap_find(BitMap* bmap, int start, int status) {
+    if(start < 0 || start >= bmap->num_bits) return -1;
+
     int pos = start;
     while(pos < bmap->num_bits) {
         
@@ -29,6 +31,7 @@ int BitMap_find(BitMap* bmap, int start, int status) {
 }
 
 int BitMap_set(BitMap* bmap, int pos, int status) {
+    if(pos < 0 || pos >= bmap->num_bits) return -1;
     BitMapEntryKey key = BitMap_blockToIndex(pos);
 
     if(key.entry_num < bmap->num_bits) {
@@ -45,6 +48,7 @@ int BitMap_set(BitMap* bmap, int pos, int status) {
 }
 
 int BitMap_get(BitMap* bmap, int pos) {
+    if(pos < 0 || pos >= bmap->num_bits) return -1;
     BitMapEntryKey key = BitMap_blockToIndex(pos);
 
     if(key.entry_num >= bmap->num_bits) {

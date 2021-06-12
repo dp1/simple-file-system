@@ -23,6 +23,10 @@ int main(int agc, char** argv) {
     assert(BitMap_set(&bmap, 10000000, 1) == -1);
     assert(BitMap_get(&bmap, 10000000) == -1);
 
+    assert(BitMap_find(&bmap, -1, 0) == -1);
+    assert(BitMap_set(&bmap, -1, 0) == -1);
+    assert(BitMap_get(&bmap, -1) == -1);
+
     BitMap_print(&bmap);
 
     free(bmap.entries);
