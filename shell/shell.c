@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 1
 #define _GNU_SOURCE
 #include "simplefs.h"
+#include "util.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -16,30 +18,146 @@ SimpleFS fs;
 DirectoryHandle *cwd = NULL;
 char cmd[MAX_CMD_LEN]; // current command
 
-void do_help(int argc, char **argv) {
-    puts("SimpleFS shell, available commands:");
-    puts("  mkdir <dir>           create directory <dir> in the current directory");
-    puts("  touch <file>          create empty file <file> in the current directory");
-    puts("  cd <dir>              move in directory <dir> from the current directory");
-    puts("  ls                    print the contents of the current directory");
-    puts("  tree                  recursively print the contents of the current directory");
-    puts("  cat <file>            print the contents of file <file>");
-    puts("  write <file> <data>   append <data> at the end of <file>, creating it if necessary");
-    puts("  rm <file|dir>         remove the specified file or directory");
-    puts("  format                format the filesystem");
-    puts("  exit                  exit the shell");
-    puts("  help                  print this message");
+void do_format(int argc, char **argv) {
+    printf("This will erase all data, continue? [y/N] ");
+    
+    char ch;
+    scanf("%c", &ch);
+    if(ch != 'y') {
+        puts("Aborted");
+        return;
+    }
+
+    SimpleFS_format(&fs);
+    puts("Done");
 }
+
+void do_mkdir(int argc, char **argv) {
+    if(SimpleFS_mkDir(cwd, argv[1]) == -1) {
+        puts("failed");
+    }
+}
+
+void do_touch(int argc, char **argv) {
+    FileHandle *fh = SimpleFS_createFile(cwd, argv[1]);
+
+    if(!fh) {
+        fprintf(stderr, "Operation failed\n");
+    }
+
+    SimpleFS_close(fh);
+}
+
+void do_cd(int argc, char **argv) {
+    if(SimpleFS_changeDir(cwd, argv[1]) == -1) {
+        fprintf(stderr, "%s: not found\n", argv[1]);
+    }
+}
+
+void do_ls(int argc, char **argv) {
+    int num_entries = cwd->dcb->num_entries;
+    char **entries = (char **) malloc(num_entries * sizeof(char *));
+    assert(entries != NULL);
+
+    if(SimpleFS_readDir(entries, cwd) == -1) {
+        fprintf(stderr, "Operation failed\n");
+    }
+
+    printf("%s:\n", cwd->dcb->fcb.name);
+    for(int i = 0; i < num_entries; i++) {
+        printf("  %s\n", entries[i]);
+    }
+
+    for(int i = 0; i < num_entries; i++) {
+        free(entries[i]);
+    }
+    free(entries);
+}
+
+void do_cat(int argc, char **argv) {
+    char buf[512];
+    FileHandle *fh = SimpleFS_openFile(cwd, argv[1]);
+    if(!fh) {
+        fprintf(stderr, "%s: not found\n", argv[1]);
+        return;
+    }
+
+    while(1) {
+        int sz = SimpleFS_read(fh, buf, sizeof(buf));
+        if(sz == -1) {
+            fprintf(stderr, "read: operation failed\n");
+            break;
+        }
+
+        if(sz == 0) break;
+        for(int i = 0; i < sz; i++) putchar(buf[i]);
+    }
+    putchar('\n');
+
+    SimpleFS_close(fh);
+}
+
+void do_write(int argc, char **argv) {
+    FileHandle *fh = SimpleFS_openFile(cwd, argv[1]);
+    if(!fh) {
+        fprintf(stderr, "%s: not found\n", argv[1]);
+        return;
+    }
+
+    if(SimpleFS_write(fh, argv[2], strlen(argv[2])) == -1) {
+        fprintf(stderr, "write: operation failed\n");
+    }
+}
+
+void do_rm(int argc, char **argv) {
+    if(SimpleFS_remove(cwd, argv[1]) == -1) {
+        fprintf(stderr, "Operation failed\n");
+    }
+}
+
+void do_help(int argc, char **argv);
 
 typedef void (*handler_fn)(int, char **);
 typedef struct {
     char *name;
     handler_fn fn;
+    int num_arguments;
+    char *argument_names;
+    char *description;
 } handler_t;
 
 handler_t handlers[] = {
-    {"help", do_help}
+    {"mkdir",  do_mkdir, 1, "<dir>", "create directory <dir> in the current directory"},
+    {"touch",  do_touch, 1, "<file>", "create empty file <file> in the current directory"},
+    {"cd",     do_cd, 1, "<dir>", "move in directory <dir> from the current directory"},
+    {"ls",     do_ls, 0, "", "print the contents of the current directory"},
+    {"tree",   NULL, 0, "", "recursively print the contents of the current directory"},
+    {"cat",    do_cat, 1, "<file>", "print the contents of file <file>"},
+    {"write",  do_write, 2, "<file> <data>", "append <data> at the end of <file>, creating it if necessary"},
+    {"rm",     do_rm, 1, "<file|dir>", "remove the specified file or directory"},
+    {"format", do_format, 0, "", "format the filesystem"},
+    {"help",   do_help, 0, "", "print this message"},
+    {"exit",   NULL, 0, "", "exit the shell"}
 };
+
+void do_help(int argc, char **argv) {
+    puts("SimpleFS shell, available commands:");
+    
+    int col_size = 0;
+    for(int i = 0; i < sizeof(handlers)/sizeof(handlers[0]); i++) {
+        col_size = max(col_size, strlen(handlers[i].name) + strlen(handlers[i].argument_names) + 4);
+    }
+    
+    assert(col_size < 63);
+    char col[64] = {0};
+
+    for(int i = 0; i < sizeof(handlers)/sizeof(handlers[0]); i++) {
+        bzero(col, sizeof(col));
+        sprintf(col, "%s %s   ", handlers[i].name, handlers[i].argument_names);
+        printf(" %-*s%s\n", col_size, col, handlers[i].description);
+    }
+}
+
 
 // Parse the string cmd into an argument list, considering quoted strings and escaped characters
 // Modifies cmd in place, returns the token array and saves its length in *num_tokens
@@ -83,7 +201,7 @@ char **parse_cmd(char *cmd, int *num_tokens) {
                     break;
                 }
 
-                // Escaped " and '
+                // Escaped \, ' and "
                 if(cmd[i] == '\\') {
                     if(i+1 >= cmd_len) {
                         fprintf(stderr, "Invalid input: incomplete escape sequence \\\n");
@@ -91,7 +209,7 @@ char **parse_cmd(char *cmd, int *num_tokens) {
                         return NULL;
                     }
                     i++;
-                    if(cmd[i] != '\'' && cmd[i] != '"') {
+                    if(!strchr("\\\'\"", cmd[i])) {
                         fprintf(stderr, "Invalid input: unknown escape sequence \\%c\n", cmd[i]);
                         free(output);
                         return NULL;
@@ -115,31 +233,62 @@ char **parse_cmd(char *cmd, int *num_tokens) {
 }
 
 int main(int argc, char **argv) {
+
+    DiskDriver_init(&disk, "simple.fs", 1024);
+    cwd = SimpleFS_init(&fs, &disk);
+    if(!cwd) {
+        fprintf(stderr, "Error opening filesystem\n");
+        exit(EXIT_FAILURE);
+    }
     
     while(1) {
         bzero(cmd, sizeof(cmd));
+
+        //DirectoryHandle_print(cwd);
         
+        printf("$ ");
         if(fgets(cmd, sizeof(cmd), stdin) == 0) {
             perror("fgets failed");
             exit(EXIT_FAILURE);
         }
-        int num_tokens;
+
+        int num_tokens = 0;
         char **parsed = parse_cmd(cmd, &num_tokens);
-        if(!parsed) {
+        if(!parsed || num_tokens == 0) {
+            if(parsed) free(parsed);
             continue;
         }
 
-        if(!strcmp(parsed[0], "quit")) {
+        if(!strcmp(parsed[0], "exit")) {
             free(parsed);
             break;
         }
+
+        bool found = false;
         for(int i = 0; i < sizeof(handlers)/sizeof(handlers[0]); i++) {
             if(!strcmp(parsed[0], handlers[i].name)) {
-                handlers[i].fn(num_tokens, parsed);
+                if(!handlers[i].fn) {
+                    puts("Unimplemented");
+                } else {
+
+                    // Right number of arguments?
+                    if(num_tokens != handlers[i].num_arguments + 1) {
+                        fprintf(stderr, "Usage: %s %s\n", handlers[i].name, handlers[i].argument_names);
+                    } else {
+                        handlers[i].fn(num_tokens, parsed);
+                    }
+                }
+
+                found = true;
                 break;
             }
+        }
+        if(!found) {
+            printf("%s: command not found\n", parsed[0]);
         }
 
         free(parsed);
     }
+
+    DiskDriver_flush(&disk);
 }
