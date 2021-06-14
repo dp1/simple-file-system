@@ -7,11 +7,12 @@ SRCS = $(wildcard src/*.c)
 OBJS = $(patsubst %.c,%.o,$(SRCS))
 TESTSRCS = $(wildcard tests/*.c)
 TESTS = $(patsubst %.c,%,$(TESTSRCS))
+SHELLSRCS = $(wildcard shell/*.c)
 
 .phony: clean all
 
 
-all: $(OBJS) $(TESTS)
+all: $(OBJS) $(TESTS) shell/shell
 
 %.o: %.c $(HEADERS)
 	$(CC) $(CCOPTS) -c -o $@ $<
@@ -19,5 +20,8 @@ all: $(OBJS) $(TESTS)
 %: %.c $(OBJS) $(HEADERS)
 	$(CC) $(CCOPTS) -o $@ $< $(OBJS)
 
+shell/shell: $(SHELLSRCS) $(OBJS) $(HEADERS)
+	$(CC) $(CCOPTS) -o $@ $(SHELLSRCS) $(OBJS)
+
 clean:
-	rm -rf *~  $(TESTS) $(OBJS)
+	rm -rf *~  $(TESTS) $(OBJS) shell/shell

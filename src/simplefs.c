@@ -14,7 +14,7 @@
 #define BYTES_IN_FIRST_FB sizeof_field(FirstFileBlock, data)
 #define BYTES_IN_FB sizeof_field(FileBlock, data)
 
-DirectoryHandle cwd; // current directory
+static DirectoryHandle cwd; // current directory
 
 typedef struct {
     DirectoryHandle *dir;
