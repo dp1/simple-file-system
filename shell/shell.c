@@ -43,6 +43,7 @@ void do_touch(int argc, char **argv) {
 
     if(!fh) {
         fprintf(stderr, "Operation failed\n");
+        return;
     }
 
     SimpleFS_close(fh);
@@ -54,24 +55,64 @@ void do_cd(int argc, char **argv) {
     }
 }
 
+typedef struct {
+    char *name;
+    bool is_dir;
+    int size;
+} ls_item;
+
+int ls_compare(const void *_a, const void *_b) {
+    ls_item *a = (ls_item *)_a;
+    ls_item *b = (ls_item *)_b;
+
+    // Directories go first
+    if(a->is_dir != b->is_dir) {
+        return a->is_dir > b->is_dir;
+    }
+    return strcmp(a->name, b->name);
+}
+
 void do_ls(int argc, char **argv) {
     int num_entries = cwd->dcb->num_entries;
-    char **entries = (char **) malloc(num_entries * sizeof(char *));
-    assert(entries != NULL);
+    ls_item *entries = (ls_item *) malloc(num_entries * sizeof(ls_item));
+    char **names = (char **) malloc(num_entries * sizeof(char *));
+    assert(entries != NULL && names != NULL);
 
-    if(SimpleFS_readDir(entries, cwd) == -1) {
+    if(SimpleFS_readDir(names, cwd) == -1) {
         fprintf(stderr, "Operation failed\n");
     }
 
-    printf("%s:\n", cwd->dcb->fcb.name);
     for(int i = 0; i < num_entries; i++) {
-        printf("  %s\n", entries[i]);
+        FileHandle *fh = SimpleFS_openFile(cwd, names[i]);
+        if(!fh) {
+            fprintf(stderr, "Operation failed\n");
+            goto cleanup;
+        }
+
+        entries[i].name = names[i];
+        entries[i].is_dir = fh->fcb->fcb.is_dir;
+        entries[i].size = fh->fcb->fcb.size_in_bytes;
+
+        SimpleFS_close(fh);
     }
 
+    qsort(entries, num_entries, sizeof(ls_item), ls_compare);
+
+    printf("%s:\n", cwd->dcb->fcb.name);
     for(int i = 0; i < num_entries; i++) {
-        free(entries[i]);
+        if(entries[i].is_dir) {
+            printf("  %s/\n", entries[i].name);
+        } else {
+            printf("  %d %s\n", entries[i].size, entries[i].name);
+        }
+    }
+
+cleanup:
+    for(int i = 0; i < num_entries; i++) {
+        free(names[i]);
     }
     free(entries);
+    free(names);
 }
 
 void do_cat(int argc, char **argv) {
