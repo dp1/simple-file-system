@@ -333,6 +333,11 @@ FileHandle *SimpleFS_openFile(DirectoryHandle *d, const char *filename) {
     FirstFileBlock *ffb;
     while((ffb = FileIterator_next(it))) {
         if(!strcmp(ffb->fcb.name, filename)) {
+
+            if(ffb->fcb.is_dir) {
+                FileIterator_close(it);
+                return NULL;
+            }
             
             // Copy so that we can free the iterator
             FirstFileBlock *ffb_copy = (FirstFileBlock *) calloc(1, sizeof(FirstFileBlock));

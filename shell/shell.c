@@ -83,17 +83,17 @@ void do_ls(int argc, char **argv) {
     }
 
     for(int i = 0; i < num_entries; i++) {
-        FileHandle *fh = SimpleFS_openFile(cwd, names[i]);
-        if(!fh) {
-            fprintf(stderr, "Operation failed\n");
-            goto cleanup;
-        }
-
         entries[i].name = names[i];
-        entries[i].is_dir = fh->fcb->fcb.is_dir;
-        entries[i].size = fh->fcb->fcb.size_in_bytes;
 
-        SimpleFS_close(fh);
+        FileHandle *fh = SimpleFS_openFile(cwd, names[i]);
+        if(fh) {
+            entries[i].size = fh->fcb->fcb.size_in_bytes;
+            entries[i].is_dir = false;
+            SimpleFS_close(fh);
+        } else {
+            entries[i].size = 0;
+            entries[i].is_dir = true;
+        }
     }
 
     qsort(entries, num_entries, sizeof(ls_item), ls_compare);
@@ -107,7 +107,6 @@ void do_ls(int argc, char **argv) {
         }
     }
 
-cleanup:
     for(int i = 0; i < num_entries; i++) {
         free(names[i]);
     }
