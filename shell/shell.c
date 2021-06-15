@@ -23,18 +23,20 @@ void do_format(int argc, char **argv) {
     
     char ch;
     scanf("%c", &ch);
+    while(getchar() != '\n');
     if(ch != 'y') {
         puts("Aborted");
         return;
     }
 
     SimpleFS_format(&fs);
+    cwd = SimpleFS_init(&fs, &disk);
     puts("Done");
 }
 
 void do_mkdir(int argc, char **argv) {
     if(SimpleFS_mkDir(cwd, argv[1]) == -1) {
-        puts("failed");
+        fprintf(stderr, "Operation failed\n");
     }
 }
 
@@ -65,10 +67,6 @@ int ls_compare(const void *_a, const void *_b) {
     ls_item *a = (ls_item *)_a;
     ls_item *b = (ls_item *)_b;
 
-    // Directories go first
-    if(a->is_dir != b->is_dir) {
-        return a->is_dir > b->is_dir;
-    }
     return strcmp(a->name, b->name);
 }
 
