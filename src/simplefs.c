@@ -100,9 +100,11 @@ int FileIterator_update(FileIterator *it, int new_child_idx) {
 void free_cwd(void) {
     if(cwd.dcb) {
         free(cwd.dcb);
+        cwd.dcb = NULL;
     }
     if(cwd.directory) {
         free(cwd.directory);
+        cwd.directory = NULL;
     }
 }
 
