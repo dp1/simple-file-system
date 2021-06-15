@@ -80,6 +80,7 @@ void do_ls(int argc, char **argv) {
 
     if(SimpleFS_readDir(names, cwd) == -1) {
         fprintf(stderr, "Operation failed\n");
+        return;
     }
 
     for(int i = 0; i < num_entries; i++) {
@@ -112,6 +113,61 @@ void do_ls(int argc, char **argv) {
     }
     free(entries);
     free(names);
+}
+
+void tree_aux(int depth) {
+    int num_entries = cwd->dcb->num_entries;
+    ls_item *entries = (ls_item *) malloc(num_entries * sizeof(ls_item));
+    char **names = (char **) malloc(num_entries * sizeof(char *));
+    assert(entries != NULL && names != NULL);
+
+    if(SimpleFS_readDir(names, cwd) == -1) {
+        fprintf(stderr, "Operation failed\n");
+        return;
+    }
+
+    for(int i = 0; i < num_entries; i++) {
+        entries[i].name = names[i];
+
+        FileHandle *fh = SimpleFS_openFile(cwd, names[i]);
+        if(fh) {
+            entries[i].size = fh->fcb->fcb.size_in_bytes;
+            entries[i].is_dir = false;
+            SimpleFS_close(fh);
+        } else {
+            entries[i].size = 0;
+            entries[i].is_dir = true;
+        }
+    }
+
+    qsort(entries, num_entries, sizeof(ls_item), ls_compare);
+
+    for(int i = 0; i < num_entries; i++) {
+        
+        for(int j = 0; j < depth; j++) printf("│   ");
+        if(i < num_entries - 1) printf("├── ");
+        else printf("└── ");
+
+        if(entries[i].is_dir) {
+            printf("%s\n", entries[i].name);
+            SimpleFS_changeDir(cwd, entries[i].name);
+            tree_aux(depth + 1);
+            SimpleFS_changeDir(cwd, "..");
+        } else {
+            printf("%s\n", entries[i].name);
+        }
+    }
+
+    for(int i = 0; i < num_entries; i++) {
+        free(names[i]);
+    }
+    free(entries);
+    free(names);
+}
+
+void do_tree(int argc, char **argv) {
+    printf("%s\n", cwd->dcb->fcb.name);
+    tree_aux(0);
 }
 
 void do_cat(int argc, char **argv) {
@@ -171,7 +227,7 @@ handler_t handlers[] = {
     {"touch",  do_touch, 1, "<file>", "create empty file <file> in the current directory"},
     {"cd",     do_cd, 1, "<dir>", "move in directory <dir> from the current directory"},
     {"ls",     do_ls, 0, "", "print the contents of the current directory"},
-    {"tree",   NULL, 0, "", "recursively print the contents of the current directory"},
+    {"tree",   do_tree, 0, "", "recursively print the contents of the current directory"},
     {"cat",    do_cat, 1, "<file>", "print the contents of file <file>"},
     {"write",  do_write, 2, "<file> <data>", "append <data> at the end of <file>, creating it if necessary"},
     {"rm",     do_rm, 1, "<file|dir>", "remove the specified file or directory"},
