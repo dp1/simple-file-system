@@ -113,6 +113,10 @@ void do_ls(int argc, char **argv) {
     free(names);
 }
 
+// Used to keep the prefix for the current line in tree
+static char *tree_prefix = NULL;
+static int tree_prefix_len, tree_prefix_cap;
+
 void tree_aux(int depth) {
     int num_entries = cwd->dcb->num_entries;
     ls_item *entries = (ls_item *) malloc(num_entries * sizeof(ls_item));
@@ -140,16 +144,38 @@ void tree_aux(int depth) {
 
     qsort(entries, num_entries, sizeof(ls_item), ls_compare);
 
+    // "│   " is 7 bytes long, make sure there's enough space to append it to the prefix
+    if(tree_prefix_cap < tree_prefix_len + 8) {
+        tree_prefix_cap = max(tree_prefix_cap * 2, tree_prefix_cap + 8);
+        tree_prefix = (char *) realloc(tree_prefix, tree_prefix_cap * sizeof(char));
+        ONERROR(tree_prefix == NULL, "realloc failed");
+    }
+
     for(int i = 0; i < num_entries; i++) {
         
-        for(int j = 0; j < depth; j++) printf("│   ");
+        printf("%s", tree_prefix);
         if(i < num_entries - 1) printf("├── ");
         else printf("└── ");
 
         if(entries[i].is_dir) {
             printf("%s\n", entries[i].name);
             SimpleFS_changeDir(cwd, entries[i].name);
+
+            int prefix_item_len = 0;
+            if(i < num_entries - 1) {
+                memcpy(tree_prefix + tree_prefix_len, "│   ", sizeof("│   "));
+                prefix_item_len = sizeof("│   ") - 1;
+            } else {
+                memcpy(tree_prefix + tree_prefix_len, "    ", 5);
+                prefix_item_len = 4;
+            }
+            tree_prefix_len += prefix_item_len;
+
             tree_aux(depth + 1);
+            
+            tree_prefix_len -= prefix_item_len;
+            tree_prefix[tree_prefix_len] = 0;
+
             SimpleFS_changeDir(cwd, "..");
         } else {
             printf("%s\n", entries[i].name);
@@ -164,8 +190,15 @@ void tree_aux(int depth) {
 }
 
 void do_tree(int argc, char **argv) {
+    tree_prefix_cap = 64;
+    tree_prefix = (char *) calloc(1, tree_prefix_cap * sizeof(char));
+    ONERROR(tree_prefix == NULL, "calloc failed");
+
     printf("%s\n", cwd->dcb->fcb.name);
     tree_aux(0);
+
+    free(tree_prefix);
+    tree_prefix = NULL;
 }
 
 void do_cat(int argc, char **argv) {
