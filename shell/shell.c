@@ -11,12 +11,16 @@
 #include <unistd.h>
 #include <ctype.h>
 
+#define BOLDBLUE "\e[1;34m"
+#define ENDCOLOR "\e[0m"
 #define MAX_CMD_LEN 4096
 
 DiskDriver disk;
 SimpleFS fs;
 DirectoryHandle *cwd = NULL;
 char cmd[MAX_CMD_LEN]; // current command
+char *cwd_path = NULL; // full path of the current directory
+int cwd_path_cap = 0;
 
 void do_format(int argc, char **argv) {
     printf("This will erase all data, continue? [y/N] ");
@@ -31,6 +35,12 @@ void do_format(int argc, char **argv) {
 
     SimpleFS_format(&fs);
     cwd = SimpleFS_init(&fs, &disk);
+
+    if(cwd_path) free(cwd_path);
+    cwd_path_cap = 64;
+    cwd_path = (char *) calloc(sizeof(char), cwd_path_cap);
+    strncpy(cwd_path, cwd->dcb->fcb.name, cwd_path_cap);
+
     puts("Done");
 }
 
@@ -54,6 +64,29 @@ void do_touch(int argc, char **argv) {
 void do_cd(int argc, char **argv) {
     if(SimpleFS_changeDir(cwd, argv[1]) == -1) {
         fprintf(stderr, "%s: not found\n", argv[1]);
+    } else {
+
+        // update the current path
+        if(!strcmp("/", argv[1])) {
+            strcpy(cwd_path, "/");
+        } else if(!strcmp("..", argv[1])) {
+            char *pos = strrchr(cwd_path, '/');
+            if(pos) {
+                if(pos == cwd_path) *(pos+1) = 0;
+                else *pos = 0;
+            }
+        } else if(!strcmp(".", argv[1])) {
+            // do nothing
+        } else {
+            if(strlen(cwd_path) + strlen(argv[1]) + 2 > cwd_path_cap) {
+                cwd_path_cap = max(cwd_path_cap * 2, strlen(cwd_path) + strlen(argv[1]) + 2);
+                cwd_path = (char *) realloc(cwd_path, cwd_path_cap * sizeof(char));
+            }
+            if(strcmp(cwd_path, "/") != 0) {
+                strcat(cwd_path, "/");
+            }
+            strcat(cwd_path, argv[1]);
+        }
     }
 }
 
@@ -367,13 +400,15 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error opening filesystem\n");
         exit(EXIT_FAILURE);
     }
+
+    cwd_path_cap = 64;
+    cwd_path = (char *) calloc(sizeof(char), cwd_path_cap);
+    strncpy(cwd_path, cwd->dcb->fcb.name, cwd_path_cap);
     
     while(1) {
         bzero(cmd, sizeof(cmd));
 
-        //DirectoryHandle_print(cwd);
-        
-        printf("$ ");
+        printf(BOLDBLUE "%s" ENDCOLOR "$ ", cwd_path);
         if(fgets(cmd, sizeof(cmd), stdin) == 0) {
             perror("fgets failed");
             exit(EXIT_FAILURE);
@@ -417,5 +452,6 @@ int main(int argc, char **argv) {
         free(parsed);
     }
 
+    free(cwd_path);
     DiskDriver_flush(&disk);
 }
