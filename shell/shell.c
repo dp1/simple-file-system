@@ -39,6 +39,7 @@ void do_format(int argc, char **argv) {
     if(cwd_path) free(cwd_path);
     cwd_path_cap = 64;
     cwd_path = (char *) calloc(sizeof(char), cwd_path_cap);
+    ONERROR(cwd_path == NULL, "calloc failed");
     strncpy(cwd_path, cwd->dcb->fcb.name, cwd_path_cap);
 
     puts("Done");
@@ -81,6 +82,7 @@ void do_cd(int argc, char **argv) {
             if(strlen(cwd_path) + strlen(argv[1]) + 2 > cwd_path_cap) {
                 cwd_path_cap = max(cwd_path_cap * 2, strlen(cwd_path) + strlen(argv[1]) + 2);
                 cwd_path = (char *) realloc(cwd_path, cwd_path_cap * sizeof(char));
+                ONERROR(cwd_path == NULL, "realloc failed");
             }
             if(strcmp(cwd_path, "/") != 0) {
                 strcat(cwd_path, "/");
@@ -260,13 +262,21 @@ void do_cat(int argc, char **argv) {
 void do_write(int argc, char **argv) {
     FileHandle *fh = SimpleFS_openFile(cwd, argv[1]);
     if(!fh) {
-        fprintf(stderr, "%s: not found\n", argv[1]);
-        return;
+
+        // File not found, try to create it
+        fh = SimpleFS_createFile(cwd, argv[1]);
+
+        if(!fh) {
+            fprintf(stderr, "%s: file creation failed\n", argv[1]);
+            return;
+        }
     }
 
     if(SimpleFS_write(fh, argv[2], strlen(argv[2])) == -1) {
         fprintf(stderr, "write: operation failed\n");
     }
+
+    SimpleFS_close(fh);
 }
 
 void do_rm(int argc, char **argv) {
@@ -403,6 +413,7 @@ int main(int argc, char **argv) {
 
     cwd_path_cap = 64;
     cwd_path = (char *) calloc(sizeof(char), cwd_path_cap);
+    ONERROR(cwd_path == NULL, "calloc failed");
     strncpy(cwd_path, cwd->dcb->fcb.name, cwd_path_cap);
     
     while(1) {
