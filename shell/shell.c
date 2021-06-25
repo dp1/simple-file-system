@@ -125,19 +125,30 @@ void do_ls(int argc, char **argv) {
             entries[i].is_dir = false;
             SimpleFS_close(fh);
         } else {
-            entries[i].size = 0;
+            entries[i].size = BLOCK_SIZE;
             entries[i].is_dir = true;
         }
     }
 
     qsort(entries, num_entries, sizeof(ls_item), ls_compare);
 
+    // Find the maximum width of the file sizes when printed.
+    // To do this, call snprintf with no buffer and a size of 0,
+    // so that it returns the size it would need to print the number
+
+    int size_width = 0;
+    for(int i = 2; i < num_entries; i++) {
+        size_width = max(size_width, snprintf(NULL, 0, "%d", entries[i].size));
+    }
+
     printf("%s:\n", cwd->dcb->fcb.name);
+    printf("  %*d ./\n", size_width, BLOCK_SIZE);
+    printf("  %*d ../\n", size_width, BLOCK_SIZE);
     for(int i = 0; i < num_entries; i++) {
         if(entries[i].is_dir) {
-            printf("  %s/\n", entries[i].name);
+            printf("  %*d %s/\n", size_width, entries[i].size, entries[i].name);
         } else {
-            printf("  %d %s\n", entries[i].size, entries[i].name);
+            printf("  %*d %s\n", size_width, entries[i].size, entries[i].name);
         }
     }
 
