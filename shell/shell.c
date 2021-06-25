@@ -136,7 +136,7 @@ void do_ls(int argc, char **argv) {
     // To do this, call snprintf with no buffer and a size of 0,
     // so that it returns the size it would need to print the number
 
-    int size_width = 0;
+    int size_width = snprintf(NULL, 0, "%d", BLOCK_SIZE);
     for(int i = 0; i < num_entries; i++) {
         size_width = max(size_width, snprintf(NULL, 0, "%d", entries[i].size));
     }
@@ -432,8 +432,9 @@ int main(int argc, char **argv) {
 
         printf(BOLDBLUE "%s" ENDCOLOR "$ ", cwd_path);
         if(fgets(cmd, sizeof(cmd), stdin) == 0) {
-            perror("fgets failed");
-            exit(EXIT_FAILURE);
+            // Ctrl+D
+            puts("");
+            break;
         }
 
         int num_tokens = 0;
