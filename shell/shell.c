@@ -137,7 +137,7 @@ void do_ls(int argc, char **argv) {
     // so that it returns the size it would need to print the number
 
     int size_width = 0;
-    for(int i = 2; i < num_entries; i++) {
+    for(int i = 0; i < num_entries; i++) {
         size_width = max(size_width, snprintf(NULL, 0, "%d", entries[i].size));
     }
 
