@@ -283,6 +283,10 @@ void do_write(int argc, char **argv) {
         }
     }
 
+    if(SimpleFS_seek(fh, fh->fcb->fcb.size_in_bytes) == -1) {
+        fprintf(stderr, "seek: operation failed\n");
+    }
+
     if(SimpleFS_write(fh, argv[2], strlen(argv[2])) == -1) {
         fprintf(stderr, "write: operation failed\n");
     }
